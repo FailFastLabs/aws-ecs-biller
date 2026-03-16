@@ -25,18 +25,33 @@ def build_ri_hourly_usage(
     if not instance_type or not region:
         return {"data": [], "layout": {"title": "Select an instance type and region"}}
 
+    # Use today as end, but if no data exists in that window, snap to
+    # the most recent data we have so the chart isn't blank.
     end_date = date.today()
     start_date = end_date - timedelta(days=n_days)
 
-    base = dict(
+    scope = dict(
         instance_type=instance_type,
         region=region,
         service="AmazonEC2",
+    )
+    if account_id:
+        scope["linked_account_id"] = account_id
+
+    if not LineItem.objects.filter(**scope, usage_start__date__gte=start_date,
+                                   usage_start__date__lt=end_date).exists():
+        from django.db.models import Max
+        latest = (LineItem.objects.filter(**scope)
+                  .aggregate(mx=Max("usage_start__date")))["mx"]
+        if latest:
+            end_date = latest + timedelta(days=1)
+            start_date = latest - timedelta(days=n_days - 1)
+
+    base = dict(
+        **scope,
         usage_start__date__gte=start_date,
         usage_start__date__lt=end_date,
     )
-    if account_id:
-        base["linked_account_id"] = account_id
 
     def hourly_qty(extra_filter):
         return (

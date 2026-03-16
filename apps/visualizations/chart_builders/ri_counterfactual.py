@@ -34,15 +34,28 @@ def build_ri_counterfactual(
     end_date = date.today()
     start_date = end_date - timedelta(days=days)
 
-    base = dict(
+    scope = dict(
         instance_type=instance_type,
         region=region,
         service="AmazonEC2",
+    )
+    if account_id:
+        scope["linked_account_id"] = account_id
+
+    # If no data in the requested window, snap to the most recent available data
+    if not LineItem.objects.filter(**scope, usage_start__date__gte=start_date,
+                                   usage_start__date__lt=end_date).exists():
+        from django.db.models import Max
+        latest = LineItem.objects.filter(**scope).aggregate(mx=Max("usage_start__date"))["mx"]
+        if latest:
+            end_date = latest + timedelta(days=1)
+            start_date = latest - timedelta(days=days - 1)
+
+    base = dict(
+        **scope,
         usage_start__date__gte=start_date,
         usage_start__date__lt=end_date,
     )
-    if account_id:
-        base["linked_account_id"] = account_id
 
     # Collect hourly usage (RI-covered + OD + spot all count as demand)
     def hourly_qs(extra):

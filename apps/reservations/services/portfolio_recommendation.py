@@ -42,13 +42,24 @@ def compute_portfolio_recommendation(account_id: str, billing_period: str, n_day
     end_date   = date.today()
     start_date = end_date - timedelta(days=n_days)
 
+    scope = dict(service="AmazonEC2")
+    if account_id:
+        scope["linked_account_id"] = account_id
+
+    # Snap to latest data if requested window has none
+    if not LineItem.objects.filter(**scope, usage_start__date__gte=start_date,
+                                   usage_start__date__lt=end_date).exists():
+        from django.db.models import Max
+        latest = LineItem.objects.filter(**scope).aggregate(mx=Max("usage_start__date"))["mx"]
+        if latest:
+            end_date = latest + timedelta(days=1)
+            start_date = latest - timedelta(days=n_days - 1)
+
     base = dict(
-        service="AmazonEC2",
+        **scope,
         usage_start__date__gte=start_date,
         usage_start__date__lt=end_date,
     )
-    if account_id:
-        base["linked_account_id"] = account_id
 
     # Hourly RI-covered usage
     ri_demand = (
