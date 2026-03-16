@@ -19,6 +19,22 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      args:
+        TARGETPLATFORM: ${TARGETPLATFORM:-linux/amd64}
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000
+    env_file: ../.env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+
+  web-dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        TARGETPLATFORM: ${TARGETPLATFORM:-linux/amd64}
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - ..:/app
@@ -33,6 +49,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      args:
+        TARGETPLATFORM: ${TARGETPLATFORM:-linux/amd64}
     command: celery -A workers worker --loglevel=info
     volumes:
       - ..:/app
@@ -40,6 +58,23 @@ services:
     depends_on:
       - db
       - redis
+
+  test:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        TARGETPLATFORM: ${TARGETPLATFORM:-linux/amd64}
+    command: >
+      sh -c "
+        pip install -r requirements/development.txt --quiet &&
+        pytest tests/ --cov=apps --cov-report=term-missing
+      "
+    volumes:
+      - ..:/app
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.test
+      DJANGO_SECRET_KEY: test-secret-key
 
 volumes:
   pgdata:
