@@ -20,290 +20,377 @@
   </form>
 </div>
 
-<!-- ── Global controls ─────────────────────────────────────────────────── -->
-<div class="chart-card mb-3 py-2">
-  <div class="d-flex gap-3 align-items-center flex-wrap">
-    <div class="d-flex align-items-center gap-2">
-      <label class="form-label mb-0 small fw-semibold">Instance / Region:</label>
-      <select id="usage-type-select" class="form-select form-select-sm" style="min-width:230px">
-        {% for t in top_usage_types %}
-          <option value="{{ t.instance_type }}|{{ t.region }}"
-            {% if t.instance_type == sel_type and t.region == sel_region %}selected{% endif %}>
-            {{ t.instance_type }} / {{ t.region }}
-          </option>
-        {% endfor %}
-        {% if not top_usage_types %}
-          <option value="">No data for {{ billing_period }}</option>
+<!-- ── Top-level tabs ───────────────────────────────────────────────────── -->
+<ul class="nav nav-tabs mb-3" id="res-tabs">
+  <li class="nav-item">
+    <button class="nav-link active" data-bs-target="#tab-analysis" data-bs-toggle="tab">
+      Analysis
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-target="#tab-solver" data-bs-toggle="tab">
+      Solver &amp; Recommendations
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-target="#tab-portfolio" data-bs-toggle="tab">
+      Active Portfolio
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content">
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     TAB 1 — ANALYSIS (per-instance hourly charts)
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="tab-pane fade show active" id="tab-analysis">
+
+  <!-- Global controls for this tab -->
+  <div class="chart-card mb-3 py-2">
+    <div class="d-flex gap-3 align-items-center flex-wrap">
+      <div class="d-flex align-items-center gap-2">
+        <label class="form-label mb-0 small fw-semibold">Instance / Region:</label>
+        <select id="usage-type-select" class="form-select form-select-sm" style="min-width:230px">
+          {% for t in top_usage_types %}
+            <option value="{{ t.instance_type }}|{{ t.region }}"
+              {% if t.instance_type == sel_type and t.region == sel_region %}selected{% endif %}>
+              {{ t.instance_type }} / {{ t.region }}
+            </option>
+          {% endfor %}
+          {% if not top_usage_types %}
+            <option value="">No data for {{ billing_period }}</option>
+          {% endif %}
+        </select>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <label class="form-label mb-0 small fw-semibold">Last N days:</label>
+        <select id="n-days-select" class="form-select form-select-sm" style="width:80px">
+          <option value="7"  {% if days == 7  %}selected{% endif %}>7d</option>
+          <option value="14" {% if days == 14 %}selected{% endif %}>14d</option>
+          <option value="30" {% if days == 30 %}selected{% endif %}>30d</option>
+          <option value="60" {% if days == 60 %}selected{% endif %}>60d</option>
+          <option value="90" {% if days == 90 %}selected{% endif %}>90d</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hourly usage stacked area -->
+  <div class="row g-3 mb-3">
+    <div class="col-12">
+      <div class="chart-card">
+        <div class="d-flex align-items-center justify-content-between mb-1">
+          <div>
+            <h6 class="mb-0">Hourly EC2 Usage — RI Covered · On-Demand · Spot</h6>
+            <small class="text-muted" id="usage-subtitle">{{ sel_type }} / {{ sel_region }} · last {{ days }} days</small>
+          </div>
+          <div class="d-flex gap-2">
+            <span class="badge" style="background:#198754">RI</span>
+            <span class="badge" style="background:#dc3545">OD</span>
+            <span class="badge" style="background:#ffc107;color:#000">Spot</span>
+            <span class="badge" style="background:#0d6efd">capacity</span>
+          </div>
+        </div>
+        <div id="chart-usage-breakdown" style="min-height:380px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- U-hoop counterfactual -->
+  <div class="row g-3 mb-3">
+    <div class="col-12">
+      <div class="chart-card">
+        <div class="d-flex align-items-center justify-content-between mb-1 flex-wrap gap-2">
+          <div>
+            <h6 class="mb-0">Counterfactual — Optimal Reservation Level</h6>
+            <small class="text-muted">Too few → OD costs rise. Too many → idle RI costs rise. Bottom of the U = optimal.</small>
+          </div>
+          <div class="d-flex gap-2 align-items-center">
+            <label class="form-label mb-0 small">Test reservation:</label>
+            <input id="cf-count-input" type="number" class="form-control form-control-sm" style="width:100px"
+              value="{{ reserved_count }}" min="0" step="1" placeholder="units">
+            <button id="cf-refresh" class="btn btn-sm btn-primary">Plot</button>
+          </div>
+        </div>
+        <div id="chart-counterfactual" style="min-height:340px"></div>
+        <div id="cf-summary" class="mt-2 small text-muted d-flex gap-3 flex-wrap"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Expiry timeline -->
+  <div class="row g-3">
+    <div class="col-12">
+      <div class="chart-card">
+        <h6>RI Burnoff — $/hr Committed by Family (step-down at each expiry)</h6>
+        <div id="chart-expiry" style="min-height:360px"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /tab-analysis -->
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     TAB 2 — SOLVER & RECOMMENDATIONS
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="tab-pane fade" id="tab-solver">
+
+  <!-- ── Portfolio sizing recommendation ──────────────────────────────── -->
+  <div class="row g-3 mb-3">
+    <div class="col-12">
+      <div class="chart-card">
+        <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
+          <div>
+            <h6 class="mb-0">Portfolio Sizing — Are We Over or Under Reserved?</h6>
+            <small class="text-muted">Compares current RI/SP commitment vs actual EC2 demand over the analysis window</small>
+          </div>
+          <div class="d-flex gap-2 align-items-center">
+            <label class="form-label mb-0 small">Analysis window:</label>
+            <select id="portfolio-days" class="form-select form-select-sm" style="width:80px">
+              <option value="14">14d</option>
+              <option value="30" selected>30d</option>
+              <option value="60">60d</option>
+              <option value="90">90d</option>
+            </select>
+            <button id="run-portfolio-btn" class="btn btn-sm btn-outline-primary">Analyse</button>
+          </div>
+        </div>
+
+        <div id="portfolio-loading" class="text-muted small" style="display:none">Analysing portfolio…</div>
+
+        <div id="portfolio-results" style="display:none">
+          <!-- Summary stat cards -->
+          <div class="row g-2 mb-3" id="portfolio-cards"></div>
+
+          <!-- Status banner -->
+          <div id="portfolio-status-banner" class="alert py-2 mb-3 small"></div>
+
+          <!-- Under-reserved: purchase recommendation table -->
+          <div id="portfolio-increase" style="display:none">
+            <h6 class="mb-2">↑ Recommended Purchases to Eliminate On-Demand Overage</h6>
+            <div class="table-responsive">
+              <table class="table table-sm table-hover mb-0">
+                <thead class="table-dark">
+                  <tr>
+                    <th>Instance Type</th><th>Region</th>
+                    <th class="text-end">Units needed</th>
+                    <th class="text-end">Est. count</th>
+                    <th class="text-end">OD $/mo (current)</th>
+                    <th class="text-end">RI $/mo (if bought)</th>
+                    <th class="text-end">Monthly saving</th>
+                  </tr>
+                </thead>
+                <tbody id="portfolio-increase-tbody"></tbody>
+                <tfoot id="portfolio-increase-tfoot" class="table-secondary fw-semibold small"></tfoot>
+              </table>
+            </div>
+          </div>
+
+          <!-- Over-reserved: natural decrease timeline -->
+          <div id="portfolio-decrease" style="display:none">
+            <h6 class="mb-2">↓ Over-Reserved — Natural Decrease Timeline</h6>
+            <div id="portfolio-decrease-body"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── LP optimizer (convertible swaps) ─────────────────────────────── -->
+  <div class="row g-3 mb-3">
+    <div class="col-12">
+      <div class="chart-card">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <div>
+            <h6 class="mb-0">LP Optimizer — Convertible RI Type Swaps</h6>
+            <small class="text-muted">
+              PuLP/CBC minimises total RI $/hr while keeping normalised units
+              constant per reservation (±1%). Shows what to convert each RI to.
+            </small>
+          </div>
+          <button id="run-lp-btn" class="btn btn-sm btn-primary">Run Optimizer</button>
+        </div>
+
+        <div id="lp-status" class="text-muted small mb-2"></div>
+
+        <!-- Before/after cost summary cards -->
+        <div id="lp-cost-summary" class="row g-2 mb-3" style="display:none"></div>
+
+        <div id="lp-results" class="table-responsive" style="display:none">
+          <div id="lp-summary" class="alert alert-success py-2 mb-2 small"></div>
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-dark">
+              <tr>
+                <th>Reservation ARN</th>
+                <th>Current Type</th>
+                <th class="text-center">→</th>
+                <th>Recommended Type</th>
+                <th class="text-end">Current $/mo</th>
+                <th class="text-end">After swap $/mo</th>
+                <th class="text-end">Saving $/mo</th>
+              </tr>
+            </thead>
+            <tbody id="lp-tbody"></tbody>
+          </table>
+        </div>
+
+        <div id="lp-empty" class="text-muted small" style="display:none">
+          No convertible RI swaps recommended — current type allocation is already optimal.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Stored purchase recommendations ──────────────────────────────── -->
+  <div class="row g-3">
+    <div class="col-12">
+      <div class="chart-card">
+        <h6>Stored Purchase Recommendations <span class="badge bg-secondary ms-1">{{ stored_recommendations|length }}</span></h6>
+        {% if stored_recommendations %}
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-dark">
+              <tr>
+                <th>Type</th><th>Region</th>
+                <th class="text-end">Qty</th>
+                <th class="text-end">Save $/mo</th>
+                <th class="text-end">Break-even</th>
+                <th class="text-end">Confidence</th>
+                <th class="text-muted">Generated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in stored_recommendations %}
+              <tr>
+                <td>
+                  <strong>{{ r.instance_type }}</strong>
+                  <small class="text-muted d-block">{{ r.recommendation_type }}</small>
+                </td>
+                <td><small>{{ r.region }}</small></td>
+                <td class="text-end">{{ r.quantity }}</td>
+                <td class="text-end text-success">${{ r.estimated_monthly_savings|floatformat:2 }}</td>
+                <td class="text-end">{% if r.break_even_months %}{{ r.break_even_months|floatformat:1 }}mo{% else %}—{% endif %}</td>
+                <td class="text-end">
+                  <span class="badge bg-{% if r.confidence_score >= 0.8 %}success{% elif r.confidence_score >= 0.5 %}warning text-dark{% else %}danger{% endif %}">
+                    {{ r.confidence_score|floatformat:2 }}
+                  </span>
+                </td>
+                <td><small class="text-muted">{{ r.generated_at|date:"Y-m-d" }}</small></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="text-muted small mt-2">No stored recommendations. Run <code>python manage.py seed_reservations</code> to generate.</p>
         {% endif %}
-      </select>
+      </div>
     </div>
-    <div class="d-flex align-items-center gap-2">
-      <label class="form-label mb-0 small fw-semibold">Last N days:</label>
-      <select id="n-days-select" class="form-select form-select-sm" style="width:80px">
-        <option value="7"  {% if days == 7  %}selected{% endif %}>7d</option>
-        <option value="14" {% if days == 14 %}selected{% endif %}>14d</option>
-        <option value="30" {% if days == 30 %}selected{% endif %}>30d</option>
-        <option value="60" {% if days == 60 %}selected{% endif %}>60d</option>
-        <option value="90" {% if days == 90 %}selected{% endif %}>90d</option>
-      </select>
-    </div>
-    <small class="text-muted">Both charts below update when you change these.</small>
   </div>
-</div>
 
-<!-- ── Section 1: Hourly Usage Time-Series ─────────────────────────────── -->
-<div class="row g-3 mb-3">
-  <div class="col-12">
-    <div class="chart-card">
-      <div class="d-flex align-items-center justify-content-between mb-1">
-        <div>
-          <h6 class="mb-0">Hourly EC2 Usage — RI Covered · On-Demand · Spot</h6>
-          <small class="text-muted" id="usage-subtitle">
-            {{ sel_type }} / {{ sel_region }} &nbsp;·&nbsp; last {{ days }} days
-          </small>
+</div><!-- /tab-solver -->
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     TAB 3 — ACTIVE PORTFOLIO (tables)
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="tab-pane fade" id="tab-portfolio">
+
+  <div class="row g-3 mb-3">
+    <div class="col-12">
+      <div class="chart-card">
+        <h6>Active Reserved Instances ({{ ri_list|length }})</h6>
+        {% if ri_list %}
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-dark">
+              <tr>
+                <th>Reservation ID</th><th>Type</th><th>Region</th><th>Class</th>
+                <th>Platform</th><th class="text-end">Count</th>
+                <th class="text-end">Norm Units</th><th class="text-end">$/hr</th>
+                <th>Start</th><th>End</th><th class="text-end">Days Left</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for ri in ri_list %}
+              <tr>
+                <td><small class="text-muted font-monospace">{{ ri.reservation_id|truncatechars:20 }}</small></td>
+                <td><strong>{{ ri.instance_type }}</strong></td>
+                <td>{{ ri.region }}</td>
+                <td>
+                  <span class="badge bg-{% if ri.offering_class == 'convertible' %}info text-dark{% else %}secondary{% endif %}">
+                    {{ ri.offering_class }}
+                  </span>
+                </td>
+                <td><small>{{ ri.platform|default:"—" }}</small></td>
+                <td class="text-end">{{ ri.instance_count }}</td>
+                <td class="text-end">{{ ri.normalized_units|floatformat:1 }}</td>
+                <td class="text-end">${{ ri.recurring_hourly_cost|floatformat:4 }}</td>
+                <td><small>{{ ri.start_date }}</small></td>
+                <td><small>{{ ri.end_date }}</small></td>
+                <td class="text-end days-left" data-end="{{ ri.end_date }}">—</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
-        <div class="d-flex gap-2 align-items-center">
-          <span class="badge" style="background:#198754">RI Covered</span>
-          <span class="badge" style="background:#dc3545">On-Demand</span>
-          <span class="badge" style="background:#ffc107;color:#000">Spot</span>
-          <span class="badge" style="background:#0d6efd">── Reserved capacity</span>
+        {% else %}
+        <p class="text-muted small">No active reserved instances. <a href="/admin/">Load fixture data</a> to get started.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12">
+      <div class="chart-card">
+        <h6>Active Savings Plans ({{ sp_list|length }})</h6>
+        {% if sp_list %}
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-dark">
+              <tr>
+                <th>Plan ID</th><th>Type</th>
+                <th class="text-end">$/hr Commitment</th>
+                <th>Start</th><th>End</th><th class="text-end">Days Left</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for sp in sp_list %}
+              <tr>
+                <td><small class="text-muted font-monospace">{{ sp.savings_plan_id|truncatechars:24 }}</small></td>
+                <td>{{ sp.plan_type }}</td>
+                <td class="text-end">${{ sp.commitment_hourly|floatformat:4 }}</td>
+                <td><small>{{ sp.start_date }}</small></td>
+                <td><small>{{ sp.end_date }}</small></td>
+                <td class="text-end days-left" data-end="{{ sp.end_date }}">—</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
-      </div>
-      <div id="chart-usage-breakdown" style="min-height:380px"></div>
-    </div>
-  </div>
-</div>
-
-<!-- ── Section 2: Counterfactual U-hoop ────────────────────────────────── -->
-<div class="row g-3 mb-3">
-  <div class="col-12">
-    <div class="chart-card">
-      <div class="d-flex align-items-center justify-content-between mb-1 flex-wrap gap-2">
-        <div>
-          <h6 class="mb-0">Counterfactual — Optimal Reservation Level</h6>
-          <small class="text-muted">
-            Too few reserved → on-demand costs rise.&nbsp;
-            Too many → idle RI costs rise.&nbsp;
-            The bottom of the U is optimal.
-          </small>
-        </div>
-        <div class="d-flex gap-2 align-items-center">
-          <label class="form-label mb-0 small">Test reservation:</label>
-          <input id="cf-count-input" type="number" class="form-control form-control-sm" style="width:100px"
-            value="{{ reserved_count }}" min="0" step="1" placeholder="units">
-          <button id="cf-refresh" class="btn btn-sm btn-primary">Plot</button>
-        </div>
-      </div>
-      <div id="chart-counterfactual" style="min-height:340px"></div>
-      <div id="cf-summary" class="mt-2 small text-muted d-flex gap-3 flex-wrap"></div>
-    </div>
-  </div>
-</div>
-
-<!-- ── Section 3: Time to Expiration ───────────────────────────────────── -->
-<div class="row g-3 mb-3">
-  <div class="col-12">
-    <div class="chart-card">
-      <h6>Time to Expiration — RI $/hr by Family &amp; Savings Plan Commitment</h6>
-      <div id="chart-expiry" style="min-height:360px"></div>
-    </div>
-  </div>
-</div>
-
-<!-- ── Section 4: Recommendations ─────────────────────────────────────── -->
-<div class="row g-3 mb-3">
-
-  <!-- LP Optimizer (convertible swaps) -->
-  <div class="col-lg-7">
-    <div class="chart-card h-100">
-      <div class="d-flex align-items-center justify-content-between mb-2">
-        <div>
-          <h6 class="mb-0">LP Optimizer — Convertible RI Swaps</h6>
-          <small class="text-muted">PuLP/CBC minimises total RI hourly cost while holding normalised units constant</small>
-        </div>
-        <button id="run-lp-btn" class="btn btn-sm btn-primary">Run Optimizer</button>
-      </div>
-
-      <div id="lp-status" class="text-muted small mb-2"></div>
-
-      <div id="lp-results" class="table-responsive" style="display:none">
-        <div id="lp-summary" class="alert alert-success py-2 mb-2 small"></div>
-        <table class="table table-sm table-hover mb-0">
-          <thead class="table-dark">
-            <tr>
-              <th>Reservation ARN</th>
-              <th>Current Type</th>
-              <th>→ Recommended</th>
-              <th class="text-end">Current $/mo</th>
-              <th class="text-end">Optimal $/mo</th>
-              <th class="text-end">Saving $/mo</th>
-            </tr>
-          </thead>
-          <tbody id="lp-tbody"></tbody>
-        </table>
-      </div>
-
-      <div id="lp-empty" class="text-muted small" style="display:none">
-        No convertible RI swaps recommended — current allocation is already optimal
-        for this billing period.
+        {% else %}
+        <p class="text-muted small">No active savings plans.</p>
+        {% endif %}
       </div>
     </div>
   </div>
 
-  <!-- Stored purchase recommendations -->
-  <div class="col-lg-5">
-    <div class="chart-card h-100">
-      <h6>Purchase Recommendations
-        <span class="badge bg-secondary ms-1">{{ stored_recommendations|length }}</span>
-      </h6>
-      {% if stored_recommendations %}
-      <div class="table-responsive">
-        <table class="table table-sm table-hover mb-0">
-          <thead class="table-dark">
-            <tr>
-              <th>Type</th>
-              <th>Region</th>
-              <th class="text-end">Qty</th>
-              <th class="text-end">Save $/mo</th>
-              <th class="text-end">Break-even</th>
-              <th class="text-end">Confidence</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for r in stored_recommendations %}
-            <tr>
-              <td>
-                <strong>{{ r.instance_type }}</strong>
-                <small class="text-muted d-block">{{ r.recommendation_type }}</small>
-              </td>
-              <td><small>{{ r.region }}</small></td>
-              <td class="text-end">{{ r.quantity }}</td>
-              <td class="text-end text-success">${{ r.estimated_monthly_savings|floatformat:2 }}</td>
-              <td class="text-end">
-                {% if r.break_even_months %}
-                  {{ r.break_even_months|floatformat:1 }}mo
-                {% else %}—{% endif %}
-              </td>
-              <td class="text-end">
-                <span class="badge bg-{% if r.confidence_score >= 0.8 %}success{% elif r.confidence_score >= 0.5 %}warning text-dark{% else %}danger{% endif %}">
-                  {{ r.confidence_score|floatformat:2 }}
-                </span>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% else %}
-      <p class="text-muted small mt-2">
-        No stored recommendations yet. Run <code>python manage.py seed_reservations</code>
-        or trigger analysis via the API to generate recommendations.
-      </p>
-      {% endif %}
-    </div>
-  </div>
-</div>
+</div><!-- /tab-portfolio -->
 
-<!-- ── Section 5: All Active Reserved Instances ────────────────────────── -->
-<div class="row g-3 mb-3">
-  <div class="col-12">
-    <div class="chart-card">
-      <h6>Active Reserved Instances ({{ ri_list|length }})</h6>
-      {% if ri_list %}
-      <div class="table-responsive">
-        <table class="table table-sm table-hover mb-0">
-          <thead class="table-dark">
-            <tr>
-              <th>Reservation ID</th>
-              <th>Type</th>
-              <th>Region</th>
-              <th>Class</th>
-              <th>Platform</th>
-              <th class="text-end">Count</th>
-              <th class="text-end">Norm Units</th>
-              <th class="text-end">$/hr</th>
-              <th>Start</th>
-              <th>End</th>
-              <th class="text-end">Days Left</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for ri in ri_list %}
-            <tr>
-              <td><small class="text-muted font-monospace">{{ ri.reservation_id|truncatechars:20 }}</small></td>
-              <td><strong>{{ ri.instance_type }}</strong></td>
-              <td>{{ ri.region }}</td>
-              <td>
-                <span class="badge bg-{% if ri.offering_class == 'convertible' %}info text-dark{% else %}secondary{% endif %}">
-                  {{ ri.offering_class }}
-                </span>
-              </td>
-              <td><small>{{ ri.platform|default:"—" }}</small></td>
-              <td class="text-end">{{ ri.instance_count }}</td>
-              <td class="text-end">{{ ri.normalized_units|floatformat:1 }}</td>
-              <td class="text-end">${{ ri.recurring_hourly_cost|floatformat:4 }}</td>
-              <td><small>{{ ri.start_date }}</small></td>
-              <td><small>{{ ri.end_date }}</small></td>
-              <td class="text-end days-left" data-end="{{ ri.end_date }}">—</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% else %}
-      <p class="text-muted small">No active reserved instances. <a href="/admin/">Load fixture data</a> to get started.</p>
-      {% endif %}
-    </div>
-  </div>
-</div>
-
-<!-- ── Section 5: Active Savings Plans ─────────────────────────────────── -->
-<div class="row g-3">
-  <div class="col-12">
-    <div class="chart-card">
-      <h6>Active Savings Plans ({{ sp_list|length }})</h6>
-      {% if sp_list %}
-      <div class="table-responsive">
-        <table class="table table-sm table-hover mb-0">
-          <thead class="table-dark">
-            <tr>
-              <th>Plan ID</th>
-              <th>Type</th>
-              <th class="text-end">$/hr Commitment</th>
-              <th>Start</th>
-              <th>End</th>
-              <th class="text-end">Days Left</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for sp in sp_list %}
-            <tr>
-              <td><small class="text-muted font-monospace">{{ sp.savings_plan_id|truncatechars:24 }}</small></td>
-              <td>{{ sp.plan_type }}</td>
-              <td class="text-end">${{ sp.commitment_hourly|floatformat:4 }}</td>
-              <td><small>{{ sp.start_date }}</small></td>
-              <td><small>{{ sp.end_date }}</small></td>
-              <td class="text-end days-left" data-end="{{ sp.end_date }}">—</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% else %}
-      <p class="text-muted small">No active savings plans.</p>
-      {% endif %}
-    </div>
-  </div>
-</div>
+</div><!-- /tab-content -->
 {% endblock %}
 
 {% block extra_js %}
 <script>
-const acct   = "{{ account_id }}";
-let selType  = "{{ sel_type }}";
-let selRegion= "{{ sel_region }}";
-let nDays    = {{ days }};
-let cfCount  = parseFloat("{{ reserved_count }}") || 0;
+const bp      = "{{ billing_period }}";
+const acct    = "{{ account_id }}";
+let selType   = "{{ sel_type }}";
+let selRegion = "{{ sel_region }}";
+let nDays     = {{ days }};
+let cfCount   = parseFloat("{{ reserved_count }}") || 0;
 
 // ── Days-left badges ───────────────────────────────────────────────────
 const today = new Date(); today.setHours(0,0,0,0);
@@ -316,18 +403,15 @@ document.querySelectorAll('.days-left').forEach(td => {
   }
 });
 
-// ── Chart 1: hourly usage stacked area ────────────────────────────────
+// ── Analysis tab charts ────────────────────────────────────────────────
 function loadUsageBreakdown() {
   if (!selType || !selRegion) return;
   const url = `/api/v1/viz/ri-usage-breakdown/?account_id=${acct}` +
-    `&instance_type=${encodeURIComponent(selType)}&region=${encodeURIComponent(selRegion)}` +
-    `&n_days=${nDays}`;
-  document.getElementById('usage-subtitle').textContent =
-    `${selType} / ${selRegion} · last ${nDays} days`;
+    `&instance_type=${encodeURIComponent(selType)}&region=${encodeURIComponent(selRegion)}&n_days=${nDays}`;
+  document.getElementById('usage-subtitle').textContent = `${selType} / ${selRegion} · last ${nDays} days`;
   loadChart('chart-usage-breakdown', url);
 }
 
-// ── Chart 2: counterfactual U-hoop ────────────────────────────────────
 function loadCounterfactual() {
   if (!selType || !selRegion) {
     document.getElementById('chart-counterfactual').innerHTML =
@@ -337,115 +421,219 @@ function loadCounterfactual() {
   const url = `/api/v1/viz/ri-counterfactual/?account_id=${acct}` +
     `&instance_type=${encodeURIComponent(selType)}&region=${encodeURIComponent(selRegion)}` +
     `&reserved_count=${cfCount}&days=${nDays}`;
-
-  fetch(url)
-    .then(r => r.json())
-    .then(data => {
-      const layout = Object.assign({
-        margin: {t: 20, r: 20, b: 80, l: 70},
-        paper_bgcolor: 'transparent',
-        plot_bgcolor:  'transparent',
-        font: {family: 'system-ui, sans-serif', size: 12},
-        legend: {orientation: 'h', y: -0.3},
-        autosize: true,
-      }, data.layout || {});
-      Plotly.newPlot('chart-counterfactual', data.data || [], layout,
-        {responsive: true, displayModeBar: false});
-
-      const sumEl = document.getElementById('cf-summary');
-      if (data.optimal_R !== undefined) {
-        const saving = data.avg_counterfactual - data.optimal_cost;
-        sumEl.innerHTML =
-          `<span>Actual avg/day: <strong>$${data.avg_actual.toFixed(2)}</strong></span>` +
-          `<span>Current (${data.current_R} units) avg/day: <strong>$${data.avg_counterfactual.toFixed(2)}</strong></span>` +
-          `<span class="text-success">Optimal: <strong>${data.optimal_R} units → $${data.optimal_cost.toFixed(2)}/day</strong></span>` +
-          (saving > 0.005
-            ? `<span class="text-warning">Potential saving vs current: <strong>$${saving.toFixed(2)}/day</strong></span>`
-            : `<span class="text-success">Already at or near optimal</span>`);
-      }
-    })
-    .catch(() => {
-      document.getElementById('chart-counterfactual').innerHTML =
-        '<div class="text-muted text-center py-5">No usage data available for this selection</div>';
-    });
+  fetch(url).then(r => r.json()).then(data => {
+    const layout = Object.assign({
+      margin:{t:20,r:20,b:80,l:70}, paper_bgcolor:'transparent',
+      plot_bgcolor:'transparent', font:{family:'system-ui,sans-serif',size:12},
+      legend:{orientation:'h',y:-0.3}, autosize:true,
+    }, data.layout || {});
+    Plotly.newPlot('chart-counterfactual', data.data || [], layout, {responsive:true, displayModeBar:false});
+    const sumEl = document.getElementById('cf-summary');
+    if (data.optimal_R !== undefined) {
+      const saving = data.avg_counterfactual - data.optimal_cost;
+      sumEl.innerHTML =
+        `<span>Actual avg/day: <strong>$${data.avg_actual.toFixed(2)}</strong></span>` +
+        `<span>Current (${data.current_R} units): <strong>$${data.avg_counterfactual.toFixed(2)}/day</strong></span>` +
+        `<span class="text-success">Optimal: <strong>${data.optimal_R} units → $${data.optimal_cost.toFixed(2)}/day</strong></span>` +
+        (saving > 0.005
+          ? `<span class="text-warning">Potential saving: <strong>$${saving.toFixed(2)}/day</strong></span>`
+          : `<span class="text-success">At or near optimal</span>`);
+    }
+  }).catch(() => {
+    document.getElementById('chart-counterfactual').innerHTML =
+      '<div class="text-muted text-center py-5">No usage data available</div>';
+  });
 }
 
-// ── Wire up controls ───────────────────────────────────────────────────
-function refreshAll() {
-  loadUsageBreakdown();
-  loadCounterfactual();
-}
+function refreshAnalysis() { loadUsageBreakdown(); loadCounterfactual(); }
 
 document.getElementById('usage-type-select').addEventListener('change', function() {
   const [it, reg] = this.value.split('|');
-  selType = it || ''; selRegion = reg || '';
-  refreshAll();
+  selType = it||''; selRegion = reg||''; refreshAnalysis();
 });
-
 document.getElementById('n-days-select').addEventListener('change', function() {
-  nDays = parseInt(this.value);
-  refreshAll();
+  nDays = parseInt(this.value); refreshAnalysis();
 });
-
 document.getElementById('cf-refresh').addEventListener('click', function() {
   cfCount = parseFloat(document.getElementById('cf-count-input').value) || 0;
   loadCounterfactual();
 });
 document.getElementById('cf-count-input').addEventListener('keydown', function(e) {
-  if (e.key === 'Enter') { cfCount = parseFloat(this.value) || 0; loadCounterfactual(); }
+  if (e.key === 'Enter') { cfCount = parseFloat(this.value)||0; loadCounterfactual(); }
 });
 
-// ── Expiry timeline (static, account-scoped) ───────────────────────────
 loadChart('chart-expiry', `/api/v1/viz/ri-expiry-timeline/?account_id=${acct}`);
+refreshAnalysis();
+
+// ── Portfolio sizing analyser ──────────────────────────────────────────
+function fmt(n)  { return '$' + (n||0).toFixed(4); }
+function fmtm(n) { return '$' + (n||0).toFixed(2); }
+
+document.getElementById('run-portfolio-btn').addEventListener('click', runPortfolio);
+
+function runPortfolio() {
+  const pDays = document.getElementById('portfolio-days').value;
+  document.getElementById('portfolio-loading').style.display = 'block';
+  document.getElementById('portfolio-results').style.display = 'none';
+
+  fetch(`/api/v1/reservations/portfolio-recommendation/?account_id=${acct}&billing_period=${bp}&n_days=${pDays}`)
+    .then(r => r.json())
+    .then(d => {
+      document.getElementById('portfolio-loading').style.display = 'none';
+      document.getElementById('portfolio-results').style.display = 'block';
+
+      // Stat cards
+      document.getElementById('portfolio-cards').innerHTML = `
+        <div class="col-sm-6 col-xl-3"><div class="card p-2 text-center">
+          <div class="small text-muted">RI Committed</div>
+          <div class="fs-5 fw-bold">${fmt(d.current_ri_hourly)}<small class="text-muted">/hr</small></div>
+        </div></div>
+        <div class="col-sm-6 col-xl-3"><div class="card p-2 text-center">
+          <div class="small text-muted">SP Committed</div>
+          <div class="fs-5 fw-bold">${fmt(d.current_sp_hourly)}<small class="text-muted">/hr</small></div>
+        </div></div>
+        <div class="col-sm-6 col-xl-3"><div class="card p-2 text-center">
+          <div class="small text-muted">Avg RI Demand (${d.n_days}d)</div>
+          <div class="fs-5 fw-bold">${fmt(d.avg_ri_demand_hourly)}<small class="text-muted">/hr</small></div>
+        </div></div>
+        <div class="col-sm-6 col-xl-3"><div class="card p-2 text-center">
+          <div class="small text-muted">OD Overage</div>
+          <div class="fs-5 fw-bold ${d.avg_od_demand_hourly > 0 ? 'text-danger' : 'text-success'}">${fmt(d.avg_od_demand_hourly)}<small class="text-muted">/hr</small></div>
+        </div></div>`;
+
+      // Status banner
+      const banner = document.getElementById('portfolio-status-banner');
+      if (d.status === 'under') {
+        banner.className = 'alert alert-danger py-2 mb-3 small';
+        banner.innerHTML = `<strong>⬆ Under-reserved</strong> — Average on-demand overage of
+          <strong>${fmt(d.avg_od_demand_hourly)}/hr</strong> (${fmtm(d.avg_od_demand_hourly*24*30)}/mo).
+          Purchasing RIs for the top OD types would eliminate this cost.`;
+      } else if (d.status === 'over') {
+        banner.className = 'alert alert-warning py-2 mb-3 small';
+        banner.innerHTML = `<strong>⬇ Over-reserved</strong> — Paying for
+          <strong>${fmt(d.unused_ri_hourly)}/hr</strong> of idle RI capacity
+          (${fmtm(d.unused_ri_hourly*24*30)}/mo wasted). AWS does not allow early cancellation.`;
+      } else {
+        banner.className = 'alert alert-success py-2 mb-3 small';
+        banner.innerHTML = `<strong>✓ Optimally reserved</strong> — RI commitment closely matches actual demand.`;
+      }
+
+      // Under-reserved: purchase table
+      const incEl = document.getElementById('portfolio-increase');
+      const decEl = document.getElementById('portfolio-decrease');
+      incEl.style.display = 'none'; decEl.style.display = 'none';
+
+      if (d.status === 'under' && d.increase_recs.length) {
+        incEl.style.display = 'block';
+        const totalSaving = d.increase_recs.reduce((s, r) => s + r.monthly_savings, 0);
+        document.getElementById('portfolio-increase-tbody').innerHTML = d.increase_recs.map(r => `
+          <tr>
+            <td><strong>${r.instance_type}</strong></td>
+            <td><small>${r.region}</small></td>
+            <td class="text-end">${r.units_needed}</td>
+            <td class="text-end">~${r.count_needed}</td>
+            <td class="text-end text-danger">${fmtm(r.monthly_od_cost)}</td>
+            <td class="text-end">${fmtm(r.monthly_ri_cost)}</td>
+            <td class="text-end text-success fw-semibold">${fmtm(r.monthly_savings)}</td>
+          </tr>`).join('');
+        document.getElementById('portfolio-increase-tfoot').innerHTML = `
+          <tr>
+            <td colspan="6" class="text-end">Total monthly saving if all purchased:</td>
+            <td class="text-end text-success">${fmtm(totalSaving)}</td>
+          </tr>`;
+      }
+
+      // Over-reserved: timeline
+      if (d.status === 'over' && d.decrease_timeline) {
+        decEl.style.display = 'block';
+        const dt = d.decrease_timeline;
+        const natDate = dt.natural_date ? dt.natural_date : 'beyond tracked horizon';
+        const months  = dt.months_until_optimal ? `(~${dt.months_until_optimal} months)` : '';
+        const excessRis = (dt.excess_ris||[]).map(r =>
+          `<li>${r.instance_type} × ${r.instance_count} in ${r.region} — ${fmt(r.hourly_cost)}/hr, expires ${r.end_date}</li>`
+        ).join('');
+        document.getElementById('portfolio-decrease-body').innerHTML = `
+          <p class="small mb-2">
+            You are over-reserved by <strong>${fmt(dt.excess_hourly)}/hr</strong>
+            (target: <strong>${fmt(dt.target_hourly)}/hr</strong>).
+            AWS does not allow early RI cancellations.
+          </p>
+          <p class="small mb-2">
+            Based on your expiry schedule, the portfolio will naturally reach the
+            optimal commitment level by <strong>${natDate}</strong> ${months}.
+          </p>
+          <p class="small mb-1 fw-semibold">Reservations contributing to excess capacity:</p>
+          <ul class="small">${excessRis}</ul>`;
+      }
+    })
+    .catch(err => {
+      document.getElementById('portfolio-loading').style.display = 'none';
+      document.getElementById('portfolio-results').style.display = 'block';
+      document.getElementById('portfolio-status-banner').className = 'alert alert-danger py-2 mb-3 small';
+      document.getElementById('portfolio-status-banner').textContent = 'Error: ' + err.message;
+    });
+}
 
 // ── LP Optimizer ───────────────────────────────────────────────────────
 document.getElementById('run-lp-btn').addEventListener('click', function() {
   const btn = this;
-  btn.disabled = true;
-  btn.textContent = 'Running…';
-  document.getElementById('lp-status').textContent = 'Solving LP (CBC)…';
+  btn.disabled = true; btn.textContent = 'Solving…';
+  document.getElementById('lp-status').textContent = 'Running PuLP/CBC…';
   document.getElementById('lp-results').style.display = 'none';
   document.getElementById('lp-empty').style.display  = 'none';
+  document.getElementById('lp-cost-summary').style.display = 'none';
 
   fetch('/api/v1/reservations/recommendations/run/', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+    headers: {'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},
     body: JSON.stringify({account_id: acct, billing_period: bp}),
   })
   .then(r => r.json())
   .then(data => {
-    btn.disabled = false;
-    btn.textContent = 'Run Optimizer';
+    btn.disabled = false; btn.textContent = 'Run Optimizer';
     document.getElementById('lp-status').textContent = '';
+
+    // Before / after cost cards
+    if (data.current_hourly !== undefined) {
+      const cs = document.getElementById('lp-cost-summary');
+      cs.style.display = 'flex';
+      cs.innerHTML = `
+        <div class="col-sm-4"><div class="card p-2 text-center">
+          <div class="small text-muted">Current RI $/hr</div>
+          <div class="fs-5 fw-bold">${fmt(data.current_hourly)}</div>
+        </div></div>
+        <div class="col-sm-4"><div class="card p-2 text-center">
+          <div class="small text-muted">After Swaps $/hr</div>
+          <div class="fs-5 fw-bold text-success">${fmt(data.projected_hourly)}</div>
+        </div></div>
+        <div class="col-sm-4"><div class="card p-2 text-center">
+          <div class="small text-muted">Hourly Saving</div>
+          <div class="fs-5 fw-bold text-success">${fmt(data.hourly_savings)}</div>
+          <div class="small text-muted">${fmtm(data.monthly_savings_total)}/mo</div>
+        </div></div>`;
+    }
 
     const swaps = data.swaps || [];
     if (!swaps.length) {
-      document.getElementById('lp-empty').style.display = 'block';
-      return;
+      document.getElementById('lp-empty').style.display = 'block'; return;
     }
-
-    const totalSaving = swaps.reduce((s, r) => s + r.monthly_savings, 0);
     document.getElementById('lp-summary').innerHTML =
-      `<strong>${swaps.length}</strong> swap${swaps.length > 1 ? 's' : ''} recommended &nbsp;·&nbsp; ` +
-      `Total potential saving: <strong>$${totalSaving.toFixed(2)}/mo</strong>`;
-
-    const tbody = document.getElementById('lp-tbody');
-    tbody.innerHTML = swaps.map(r => `
+      `<strong>${swaps.length}</strong> swap${swaps.length > 1 ? 's' : ''} recommended`;
+    document.getElementById('lp-tbody').innerHTML = swaps.map(s => `
       <tr>
-        <td><small class="text-muted font-monospace">${r.ri_arn.split('/').pop().slice(0,20)}</small></td>
-        <td>${r.current_type}</td>
-        <td><strong class="text-success">${r.recommended_type}</strong></td>
-        <td class="text-end">$${r.current_monthly_cost.toFixed(2)}</td>
-        <td class="text-end">$${r.optimal_monthly_cost.toFixed(2)}</td>
-        <td class="text-end text-success fw-semibold">$${r.monthly_savings.toFixed(2)}</td>
+        <td><small class="text-muted font-monospace">${s.ri_arn.split('/').pop().slice(0,22)}</small></td>
+        <td class="text-muted">${s.current_type}</td>
+        <td class="text-center text-muted">→</td>
+        <td><strong class="text-success">${s.recommended_type}</strong></td>
+        <td class="text-end">${fmtm(s.current_monthly_cost)}</td>
+        <td class="text-end text-success">${fmtm(s.optimal_monthly_cost)}</td>
+        <td class="text-end text-success fw-semibold">${fmtm(s.monthly_savings)}</td>
       </tr>`).join('');
-
     document.getElementById('lp-results').style.display = 'block';
   })
   .catch(err => {
-    btn.disabled = false;
-    btn.textContent = 'Run Optimizer';
-    document.getElementById('lp-status').textContent = 'Error running optimizer: ' + err.message;
+    btn.disabled = false; btn.textContent = 'Run Optimizer';
+    document.getElementById('lp-status').textContent = 'Error: ' + err.message;
   });
 });
 
@@ -453,8 +641,5 @@ function getCookie(name) {
   const v = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)');
   return v ? v[2] : '';
 }
-
-// ── Initial load ───────────────────────────────────────────────────────
-refreshAll();
 </script>
 {% endblock %}

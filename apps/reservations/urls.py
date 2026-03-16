@@ -3,6 +3,7 @@ from .views import (
     ReservedInstanceListView, SavingsPlanListView,
     RiCoverageView, RiUtilizationView, SpCounterfactualView,
     RiRecommendationListView, RunRecommendationsView, ConvertibleSwapsView,
+    PortfolioRecommendationView,
 )
 
 urlpatterns = [
@@ -14,4 +15,5 @@ urlpatterns = [
     path("reservations/recommendations/", RiRecommendationListView.as_view()),
     path("reservations/recommendations/run/", RunRecommendationsView.as_view()),
     path("reservations/convertible-swaps/", ConvertibleSwapsView.as_view()),
+    path("reservations/portfolio-recommendation/", PortfolioRecommendationView.as_view()),
 ]
