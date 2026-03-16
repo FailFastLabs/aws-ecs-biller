@@ -110,7 +110,101 @@
   </div>
 </div>
 
-<!-- ── Section 4: All Active Reserved Instances ────────────────────────── -->
+<!-- ── Section 4: Recommendations ─────────────────────────────────────── -->
+<div class="row g-3 mb-3">
+
+  <!-- LP Optimizer (convertible swaps) -->
+  <div class="col-lg-7">
+    <div class="chart-card h-100">
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <div>
+          <h6 class="mb-0">LP Optimizer — Convertible RI Swaps</h6>
+          <small class="text-muted">PuLP/CBC minimises total RI hourly cost while holding normalised units constant</small>
+        </div>
+        <button id="run-lp-btn" class="btn btn-sm btn-primary">Run Optimizer</button>
+      </div>
+
+      <div id="lp-status" class="text-muted small mb-2"></div>
+
+      <div id="lp-results" class="table-responsive" style="display:none">
+        <div id="lp-summary" class="alert alert-success py-2 mb-2 small"></div>
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-dark">
+            <tr>
+              <th>Reservation ARN</th>
+              <th>Current Type</th>
+              <th>→ Recommended</th>
+              <th class="text-end">Current $/mo</th>
+              <th class="text-end">Optimal $/mo</th>
+              <th class="text-end">Saving $/mo</th>
+            </tr>
+          </thead>
+          <tbody id="lp-tbody"></tbody>
+        </table>
+      </div>
+
+      <div id="lp-empty" class="text-muted small" style="display:none">
+        No convertible RI swaps recommended — current allocation is already optimal
+        for this billing period.
+      </div>
+    </div>
+  </div>
+
+  <!-- Stored purchase recommendations -->
+  <div class="col-lg-5">
+    <div class="chart-card h-100">
+      <h6>Purchase Recommendations
+        <span class="badge bg-secondary ms-1">{{ stored_recommendations|length }}</span>
+      </h6>
+      {% if stored_recommendations %}
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-dark">
+            <tr>
+              <th>Type</th>
+              <th>Region</th>
+              <th class="text-end">Qty</th>
+              <th class="text-end">Save $/mo</th>
+              <th class="text-end">Break-even</th>
+              <th class="text-end">Confidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in stored_recommendations %}
+            <tr>
+              <td>
+                <strong>{{ r.instance_type }}</strong>
+                <small class="text-muted d-block">{{ r.recommendation_type }}</small>
+              </td>
+              <td><small>{{ r.region }}</small></td>
+              <td class="text-end">{{ r.quantity }}</td>
+              <td class="text-end text-success">${{ r.estimated_monthly_savings|floatformat:2 }}</td>
+              <td class="text-end">
+                {% if r.break_even_months %}
+                  {{ r.break_even_months|floatformat:1 }}mo
+                {% else %}—{% endif %}
+              </td>
+              <td class="text-end">
+                <span class="badge bg-{% if r.confidence_score >= 0.8 %}success{% elif r.confidence_score >= 0.5 %}warning text-dark{% else %}danger{% endif %}">
+                  {{ r.confidence_score|floatformat:2 }}
+                </span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="text-muted small mt-2">
+        No stored recommendations yet. Run <code>python manage.py seed_reservations</code>
+        or trigger analysis via the API to generate recommendations.
+      </p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- ── Section 5: All Active Reserved Instances ────────────────────────── -->
 <div class="row g-3 mb-3">
   <div class="col-12">
     <div class="chart-card">
@@ -303,6 +397,62 @@ document.getElementById('cf-count-input').addEventListener('keydown', function(e
 
 // ── Expiry timeline (static, account-scoped) ───────────────────────────
 loadChart('chart-expiry', `/api/v1/viz/ri-expiry-timeline/?account_id=${acct}`);
+
+// ── LP Optimizer ───────────────────────────────────────────────────────
+document.getElementById('run-lp-btn').addEventListener('click', function() {
+  const btn = this;
+  btn.disabled = true;
+  btn.textContent = 'Running…';
+  document.getElementById('lp-status').textContent = 'Solving LP (CBC)…';
+  document.getElementById('lp-results').style.display = 'none';
+  document.getElementById('lp-empty').style.display  = 'none';
+
+  fetch('/api/v1/reservations/recommendations/run/', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+    body: JSON.stringify({account_id: acct, billing_period: bp}),
+  })
+  .then(r => r.json())
+  .then(data => {
+    btn.disabled = false;
+    btn.textContent = 'Run Optimizer';
+    document.getElementById('lp-status').textContent = '';
+
+    const swaps = data.swaps || [];
+    if (!swaps.length) {
+      document.getElementById('lp-empty').style.display = 'block';
+      return;
+    }
+
+    const totalSaving = swaps.reduce((s, r) => s + r.monthly_savings, 0);
+    document.getElementById('lp-summary').innerHTML =
+      `<strong>${swaps.length}</strong> swap${swaps.length > 1 ? 's' : ''} recommended &nbsp;·&nbsp; ` +
+      `Total potential saving: <strong>$${totalSaving.toFixed(2)}/mo</strong>`;
+
+    const tbody = document.getElementById('lp-tbody');
+    tbody.innerHTML = swaps.map(r => `
+      <tr>
+        <td><small class="text-muted font-monospace">${r.ri_arn.split('/').pop().slice(0,20)}</small></td>
+        <td>${r.current_type}</td>
+        <td><strong class="text-success">${r.recommended_type}</strong></td>
+        <td class="text-end">$${r.current_monthly_cost.toFixed(2)}</td>
+        <td class="text-end">$${r.optimal_monthly_cost.toFixed(2)}</td>
+        <td class="text-end text-success fw-semibold">$${r.monthly_savings.toFixed(2)}</td>
+      </tr>`).join('');
+
+    document.getElementById('lp-results').style.display = 'block';
+  })
+  .catch(err => {
+    btn.disabled = false;
+    btn.textContent = 'Run Optimizer';
+    document.getElementById('lp-status').textContent = 'Error running optimizer: ' + err.message;
+  });
+});
+
+function getCookie(name) {
+  const v = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)');
+  return v ? v[2] : '';
+}
 
 // ── Initial load ───────────────────────────────────────────────────────
 refreshAll();

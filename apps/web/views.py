@@ -145,6 +145,18 @@ def reservations(request):
         sel_type = top_usage_types[0]["instance_type"]
         sel_region = top_usage_types[0]["region"]
 
+    # Stored RI purchase recommendations (latest per instance_type/region)
+    from apps.reservations.models import RiRecommendation
+    rec_qs = RiRecommendation.objects.select_related("account").order_by("-generated_at")
+    if account_id:
+        rec_qs = rec_qs.filter(account__account_id=account_id)
+    stored_recommendations = list(rec_qs[:50].values(
+        "id", "recommendation_type", "instance_type", "region", "platform",
+        "quantity", "estimated_monthly_savings", "break_even_months",
+        "confidence_score", "analysis_window_days", "generated_at",
+        "account__account_name",
+    ))
+
     return render(request, "web/reservations.html", {
         "accounts": accounts,
         "billing_periods": _billing_periods(),
@@ -157,6 +169,7 @@ def reservations(request):
         "sel_type": sel_type,
         "sel_region": sel_region,
         "reserved_count": reserved_count,
+        "stored_recommendations": stored_recommendations,
     })
 
 
