@@ -78,3 +78,35 @@ class SpotVsOdChartView(APIView):
             region=request.query_params.get("region", "us-east-1"),
             instance_type=request.query_params.get("instance_type", "m5.large"),
         ))
+
+
+class RiUsageBreakdownView(APIView):
+    def get(self, request):
+        from .chart_builders.ri_usage_breakdown import build_ri_usage_breakdown
+        return Response(build_ri_usage_breakdown(
+            account_id=request.query_params.get("account_id", ""),
+            billing_period=request.query_params.get("billing_period", ""),
+            instance_type=request.query_params.get("instance_type", ""),
+            region=request.query_params.get("region", ""),
+            limit=int(request.query_params.get("limit", 100)),
+        ))
+
+
+class RiCounterfactualView(APIView):
+    def get(self, request):
+        from .chart_builders.ri_counterfactual import build_ri_counterfactual
+        return Response(build_ri_counterfactual(
+            account_id=request.query_params.get("account_id", ""),
+            instance_type=request.query_params.get("instance_type", ""),
+            region=request.query_params.get("region", ""),
+            reserved_count=float(request.query_params.get("reserved_count", 0)),
+            days=int(request.query_params.get("days", 7)),
+        ))
+
+
+class RiExpiryTimelineView(APIView):
+    def get(self, request):
+        from .chart_builders.ri_expiry_timeline import build_ri_expiry_timeline
+        return Response(build_ri_expiry_timeline(
+            account_id=request.query_params.get("account_id", ""),
+        ))

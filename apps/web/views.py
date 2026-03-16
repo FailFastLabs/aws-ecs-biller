@@ -96,29 +96,67 @@ def reservations(request):
 
     bp = request.GET.get("billing_period", _current_billing_period())
     account_id = request.GET.get("account_id", "")
+    days = int(request.GET.get("days", 7))
+    sel_type = request.GET.get("instance_type", "")
+    sel_region = request.GET.get("region", "")
+    reserved_count = request.GET.get("reserved_count", "0")
+
     accounts = list(AwsAccount.objects.values("account_id", "account_name"))
 
-    ri_summary = list(
-        ReservedInstance.objects.filter(state="active")
-        .values("instance_type", "region", "offering_class")
-        .annotate(count=Count("id"), units=Sum("normalized_units"))
-        .order_by("-units")[:20]
+    ri_qs = ReservedInstance.objects.filter(state="active")
+    if account_id:
+        ri_qs = ri_qs.filter(account__account_id=account_id)
+
+    ri_list = list(
+        ri_qs.values(
+            "reservation_id", "instance_type", "instance_family", "region",
+            "offering_class", "offering_type", "instance_count", "normalized_units",
+            "recurring_hourly_cost", "fixed_price", "start_date", "end_date",
+            "scope", "tenancy", "platform", "state",
+        ).order_by("end_date")
     )
 
-    sp_summary = list(
-        SavingsPlan.objects.filter(state="active")
-        .values("plan_type")
-        .annotate(count=Count("id"), commitment=Sum("commitment_hourly"))
-        .order_by("-commitment")[:10]
+    sp_qs = SavingsPlan.objects.filter(state="active")
+    if account_id:
+        sp_qs = sp_qs.filter(account__account_id=account_id)
+
+    sp_list = list(
+        sp_qs.values(
+            "savings_plan_id", "plan_type", "commitment_hourly", "start_date", "end_date", "state"
+        ).order_by("end_date")
     )
+
+    # Top usage types for the dropdown (from LineItem data)
+    from apps.costs.models import LineItem
+    from django.db.models import Sum as DSum
+    top_types_qs = (
+        LineItem.objects.filter(billing_period=bp, service="AmazonEC2")
+        .exclude(instance_type="")
+        .values("instance_type", "region")
+        .annotate(total_qty=DSum("usage_quantity"))
+        .order_by("-total_qty")[:100]
+    )
+    if account_id:
+        top_types_qs = top_types_qs.filter(linked_account_id=account_id)
+    top_usage_types = list(top_types_qs)
+
+    # Default selection to first in list if not set
+    if not sel_type and top_usage_types:
+        sel_type = top_usage_types[0]["instance_type"]
+        sel_region = top_usage_types[0]["region"]
 
     return render(request, "web/reservations.html", {
         "accounts": accounts,
         "billing_periods": _billing_periods(),
         "billing_period": bp,
         "account_id": account_id,
-        "ri_summary": ri_summary,
-        "sp_summary": sp_summary,
+        "days": days,
+        "ri_list": ri_list,
+        "sp_list": sp_list,
+        "top_usage_types": top_usage_types,
+        "sel_type": sel_type,
+        "sel_region": sel_region,
+        "reserved_count": reserved_count,
     })
 
 

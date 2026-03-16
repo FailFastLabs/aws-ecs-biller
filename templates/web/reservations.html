@@ -3,15 +3,13 @@
 {% block nav_reservations %}active{% endblock %}
 
 {% block content %}
-<div class="page-header d-flex align-items-center justify-content-between">
+<div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
   <h1>Reservations &amp; Savings Plans</h1>
-  <form class="d-flex gap-2 align-items-center" method="get">
-    <select name="account_id" class="form-select form-select-sm" style="min-width:180px" onchange="this.form.submit()">
+  <form class="d-flex gap-2 align-items-center flex-wrap" method="get">
+    <select name="account_id" class="form-select form-select-sm" style="min-width:160px" onchange="this.form.submit()">
       <option value="">All accounts</option>
       {% for a in accounts %}
-        <option value="{{ a.account_id }}" {% if a.account_id == account_id %}selected{% endif %}>
-          {{ a.account_name }}
-        </option>
+        <option value="{{ a.account_id }}" {% if a.account_id == account_id %}selected{% endif %}>{{ a.account_name }}</option>
       {% endfor %}
     </select>
     <select name="billing_period" class="form-select form-select-sm" onchange="this.form.submit()">
@@ -22,69 +20,156 @@
   </form>
 </div>
 
-<!-- RI Coverage chart -->
+<!-- ── Section 1: Usage Breakdown ──────────────────────────────────────── -->
 <div class="row g-3 mb-3">
-  <div class="col-lg-8">
+  <div class="col-12">
     <div class="chart-card">
-      <h6>RI Coverage &amp; Utilization</h6>
-      <div id="chart-coverage" style="min-height:350px"></div>
-    </div>
-  </div>
-  <div class="col-lg-4">
-    <div class="chart-card h-100">
-      <h6>Active Savings Plans</h6>
-      {% if sp_summary %}
-      <table class="table table-sm table-hover">
-        <thead><tr><th>Type</th><th class="text-end">$/hr</th><th class="text-end">Count</th></tr></thead>
-        <tbody>
-          {% for sp in sp_summary %}
-          <tr>
-            <td><small>{{ sp.plan_type }}</small></td>
-            <td class="text-end"><small>${{ sp.commitment|floatformat:4 }}</small></td>
-            <td class="text-end"><small>{{ sp.count }}</small></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      {% else %}
-      <p class="text-muted small mt-2">No active savings plans.</p>
-      {% endif %}
+      <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
+        <h6 class="mb-0">EC2 Usage — RI Covered vs On-Demand</h6>
+        <div class="d-flex gap-2 align-items-center">
+          <select id="usage-type-select" class="form-select form-select-sm" style="min-width:220px">
+            <option value="">Top 20 (all)</option>
+            {% for t in top_usage_types %}
+              <option value="{{ t.instance_type }}|{{ t.region }}"
+                {% if t.instance_type == sel_type and t.region == sel_region %}selected{% endif %}>
+                {{ t.instance_type }} / {{ t.region }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div id="chart-usage-breakdown" style="min-height:360px"></div>
     </div>
   </div>
 </div>
 
-<!-- RI Summary table -->
-<div class="row g-3">
+<!-- ── Section 2: Counterfactual "U hoop" ──────────────────────────────── -->
+<div class="row g-3 mb-3">
   <div class="col-12">
     <div class="chart-card">
-      <h6>Active Reserved Instances</h6>
-      {% if ri_summary %}
+      <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
+        <div>
+          <h6 class="mb-0">Counterfactual: What If We Had X Reserved?</h6>
+          <small class="text-muted">
+            Showing <strong id="cf-type-label">{{ sel_type }} / {{ sel_region }}</strong>
+            — avg daily cost over last
+            <strong id="cf-days-label">{{ days }}</strong> days
+          </small>
+        </div>
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+          <label class="form-label mb-0 small">Days:</label>
+          <select id="cf-days-select" class="form-select form-select-sm" style="width:90px">
+              <option value="7"  {% if days == 7  %}selected{% endif %}>7d</option>
+            <option value="14" {% if days == 14 %}selected{% endif %}>14d</option>
+            <option value="30" {% if days == 30 %}selected{% endif %}>30d</option>
+            <option value="60" {% if days == 60 %}selected{% endif %}>60d</option>
+            <option value="90" {% if days == 90 %}selected{% endif %}>90d</option>
+          </select>
+          <label class="form-label mb-0 small">Reserved hrs/day:</label>
+          <input id="cf-count-input" type="number" class="form-control form-control-sm" style="width:90px"
+            value="{{ reserved_count }}" min="0" step="1" placeholder="0">
+          <button id="cf-refresh" class="btn btn-sm btn-primary">Refresh</button>
+        </div>
+      </div>
+      <div id="chart-counterfactual" style="min-height:320px"></div>
+      <div id="cf-summary" class="mt-2 small text-muted"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Section 3: Time to Expiration ───────────────────────────────────── -->
+<div class="row g-3 mb-3">
+  <div class="col-12">
+    <div class="chart-card">
+      <h6>Time to Expiration — RI &amp; Savings Plan $/hr at Risk</h6>
+      <div id="chart-expiry" style="min-height:360px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Section 4: All Active Reserved Instances ────────────────────────── -->
+<div class="row g-3 mb-3">
+  <div class="col-12">
+    <div class="chart-card">
+      <h6>Active Reserved Instances ({{ ri_list|length }})</h6>
+      {% if ri_list %}
       <div class="table-responsive">
-        <table class="table table-sm table-hover mb-0">
-          <thead>
+        <table class="table table-sm table-hover mb-0" id="ri-table">
+          <thead class="table-dark">
             <tr>
-              <th>Instance Type</th>
+              <th>ID</th>
+              <th>Type</th>
               <th>Region</th>
               <th>Class</th>
+              <th>Platform</th>
               <th class="text-end">Count</th>
-              <th class="text-end">Norm. Units</th>
+              <th class="text-end">Norm Units</th>
+              <th class="text-end">$/hr</th>
+              <th>Start</th>
+              <th>End</th>
+              <th class="text-end">Days Left</th>
             </tr>
           </thead>
           <tbody>
-            {% for ri in ri_summary %}
+            {% for ri in ri_list %}
             <tr>
-              <td>{{ ri.instance_type }}</td>
+              <td><small class="text-muted font-monospace">{{ ri.reservation_id|truncatechars:16 }}</small></td>
+              <td><strong>{{ ri.instance_type }}</strong></td>
               <td>{{ ri.region }}</td>
-              <td><span class="badge bg-secondary">{{ ri.offering_class }}</span></td>
-              <td class="text-end">{{ ri.count }}</td>
-              <td class="text-end">{{ ri.units|floatformat:1 }}</td>
+              <td><span class="badge bg-{% if ri.offering_class == 'convertible' %}info text-dark{% else %}secondary{% endif %}">{{ ri.offering_class }}</span></td>
+              <td><small>{{ ri.platform|default:"—" }}</small></td>
+              <td class="text-end">{{ ri.instance_count }}</td>
+              <td class="text-end">{{ ri.normalized_units|floatformat:1 }}</td>
+              <td class="text-end">${{ ri.recurring_hourly_cost|floatformat:4 }}</td>
+              <td><small>{{ ri.start_date }}</small></td>
+              <td><small class="{% if ri.end_date %}text-warning{% endif %}">{{ ri.end_date }}</small></td>
+              <td class="text-end days-left" data-end="{{ ri.end_date }}">—</td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
       {% else %}
-      <p class="text-muted small">No reserved instances found. Load fixture data via <a href="/admin/">admin</a>.</p>
+      <p class="text-muted small">No active reserved instances. <a href="/admin/">Load fixture data</a> to get started.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- ── Section 5: Active Savings Plans ─────────────────────────────────── -->
+<div class="row g-3">
+  <div class="col-12">
+    <div class="chart-card">
+      <h6>Active Savings Plans ({{ sp_list|length }})</h6>
+      {% if sp_list %}
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-dark">
+            <tr>
+              <th>Plan ID</th>
+              <th>Type</th>
+              <th class="text-end">$/hr Commitment</th>
+              <th>Start</th>
+              <th>End</th>
+              <th class="text-end">Days Left</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for sp in sp_list %}
+            <tr>
+              <td><small class="text-muted font-monospace">{{ sp.savings_plan_id|truncatechars:20 }}</small></td>
+              <td>{{ sp.plan_type }}</td>
+              <td class="text-end">${{ sp.commitment_hourly|floatformat:4 }}</td>
+              <td><small>{{ sp.start_date }}</small></td>
+              <td><small class="text-warning">{{ sp.end_date }}</small></td>
+              <td class="text-end days-left" data-end="{{ sp.end_date }}">—</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="text-muted small">No active savings plans.</p>
       {% endif %}
     </div>
   </div>
@@ -93,8 +178,100 @@
 
 {% block extra_js %}
 <script>
-  const bp = "{{ billing_period }}";
-  const acct = "{{ account_id }}";
-  loadChart("chart-coverage", `/api/v1/viz/ri-coverage/?account_id=${acct}&billing_period=${bp}`);
+const bp     = "{{ billing_period }}";
+const acct   = "{{ account_id }}";
+let selType  = "{{ sel_type }}";
+let selRegion= "{{ sel_region }}";
+let cfDays   = {{ days }};
+let cfCount  = parseFloat("{{ reserved_count }}") || 0;
+
+// ── Days-left calculation ──────────────────────────────────────────────
+const today = new Date();
+today.setHours(0,0,0,0);
+document.querySelectorAll('.days-left').forEach(td => {
+  const end = new Date(td.dataset.end);
+  if (!isNaN(end)) {
+    const diff = Math.round((end - today) / 86400000);
+    td.textContent = diff >= 0 ? diff + 'd' : 'expired';
+    td.classList.add(diff < 30 ? 'text-danger' : diff < 90 ? 'text-warning' : 'text-success');
+  }
+});
+
+// ── Usage breakdown chart ──────────────────────────────────────────────
+function loadUsageBreakdown(it, reg) {
+  let url = `/api/v1/viz/ri-usage-breakdown/?billing_period=${bp}&account_id=${acct}`;
+  if (it && reg) url += `&instance_type=${encodeURIComponent(it)}&region=${encodeURIComponent(reg)}`;
+  loadChart('chart-usage-breakdown', url);
+}
+loadUsageBreakdown(selType, selRegion);
+
+document.getElementById('usage-type-select').addEventListener('change', function() {
+  const parts = this.value.split('|');
+  selType   = parts[0] || '';
+  selRegion = parts[1] || '';
+  loadUsageBreakdown(selType, selRegion);
+  loadCounterfactual();
+  document.getElementById('cf-type-label').textContent =
+    selType ? `${selType} / ${selRegion}` : '(all)';
+});
+
+// ── Counterfactual chart ───────────────────────────────────────────────
+function loadCounterfactual() {
+  if (!selType || !selRegion) {
+    document.getElementById('chart-counterfactual').innerHTML =
+      '<div class="text-muted text-center py-5">Select an instance type from the dropdown above</div>';
+    return;
+  }
+  const url = `/api/v1/viz/ri-counterfactual/?account_id=${acct}` +
+    `&instance_type=${encodeURIComponent(selType)}&region=${encodeURIComponent(selRegion)}` +
+    `&reserved_count=${cfCount}&days=${cfDays}`;
+
+  fetch(url)
+    .then(r => r.json())
+    .then(data => {
+      const layout = Object.assign({
+        margin: {t: 30, r: 20, b: 80, l: 70},
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: {family: 'system-ui, sans-serif', size: 12},
+        legend: {orientation: 'h', y: -0.35},
+        autosize: true,
+      }, data.layout || {});
+      Plotly.newPlot('chart-counterfactual', data.data || [], layout, {responsive: true, displayModeBar: false});
+
+      if (data.avg_actual !== undefined) {
+        const savings = data.avg_actual - data.avg_counterfactual;
+        const pct = data.avg_actual > 0 ? (savings / data.avg_actual * 100).toFixed(1) : 0;
+        document.getElementById('cf-summary').innerHTML =
+          `Actual avg daily cost: <strong>$${data.avg_actual.toFixed(2)}</strong> &nbsp;|&nbsp; ` +
+          `Counterfactual at ${cfCount} reserved: <strong>$${data.avg_counterfactual.toFixed(2)}</strong> &nbsp;|&nbsp; ` +
+          (savings > 0
+            ? `<span class="text-success">Save ~$${savings.toFixed(2)}/day (${pct}%)</span>`
+            : `<span class="text-danger">Cost +$${Math.abs(savings).toFixed(2)}/day vs actual</span>`);
+      }
+    })
+    .catch(() => {
+      document.getElementById('chart-counterfactual').innerHTML =
+        '<div class="text-muted text-center py-5">No data available</div>';
+    });
+}
+loadCounterfactual();
+
+document.getElementById('cf-days-select').addEventListener('change', function() {
+  cfDays = parseInt(this.value);
+  document.getElementById('cf-days-label').textContent = cfDays;
+  loadCounterfactual();
+});
+
+document.getElementById('cf-refresh').addEventListener('click', function() {
+  cfCount = parseFloat(document.getElementById('cf-count-input').value) || 0;
+  loadCounterfactual();
+});
+document.getElementById('cf-count-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') { cfCount = parseFloat(this.value) || 0; loadCounterfactual(); }
+});
+
+// ── Expiry timeline chart ──────────────────────────────────────────────
+loadChart('chart-expiry', `/api/v1/viz/ri-expiry-timeline/?account_id=${acct}`);
 </script>
 {% endblock %}
