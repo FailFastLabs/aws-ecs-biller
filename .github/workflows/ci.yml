@@ -1,0 +1,37 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: test_cur
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements/development.txt
+      - run: ruff check .
+      - run: pytest
+        env:
+          DATABASE_URL: postgresql://test:test@localhost/test_cur
+          REDIS_URL: redis://localhost:6379/0
+          DJANGO_SECRET_KEY: ci-secret-key
+          DJANGO_SETTINGS_MODULE: config.settings.test
