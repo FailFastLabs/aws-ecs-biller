@@ -1,11 +1,24 @@
 from django.db import models
 
 
+GROUPING_REGION = "region"
+GROUPING_REGION_SERVICE = "region_service"
+GROUPING_REGION_SERVICE_INSTANCE = "region_service_instance"
+
+GROUPING_CHOICES = [
+    (GROUPING_REGION, "Region"),
+    (GROUPING_REGION_SERVICE, "Region + Service"),
+    (GROUPING_REGION_SERVICE_INSTANCE, "Region + Service + Instance Type"),
+]
+
+
 class ForecastRun(models.Model):
     account = models.ForeignKey("accounts.AwsAccount", on_delete=models.CASCADE)
     grain = models.CharField(max_length=16)
+    grouping_level = models.CharField(max_length=32, choices=GROUPING_CHOICES, default=GROUPING_REGION_SERVICE)
     service = models.CharField(max_length=128, blank=True)
     region = models.CharField(max_length=64, blank=True)
+    instance_type = models.CharField(max_length=64, blank=True)
     usage_type = models.CharField(max_length=256, blank=True)
     training_start = models.DateField()
     training_end = models.DateField()
@@ -16,7 +29,12 @@ class ForecastRun(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"ForecastRun {self.id} ({self.grain}, {self.service}, {self.region})"
+        parts = [self.region]
+        if self.service:
+            parts.append(self.service)
+        if self.instance_type:
+            parts.append(self.instance_type)
+        return f"ForecastRun {self.id} ({self.grain}, {'/'.join(parts)})"
 
 
 class ForecastPoint(models.Model):

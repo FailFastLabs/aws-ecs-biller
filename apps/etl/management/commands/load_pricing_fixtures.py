@@ -32,7 +32,7 @@ class Command(BaseCommand):
                 instance_type=r["instance_type"],
                 availability_zone=r["availability_zone"],
                 timestamp=r["timestamp"],
-                spot_price=r["spot_price_usd"],
+                spot_price=r.get("spot_price_usd", r.get("price_usd_per_hour")),
             )
             for _, r in spot_df.iterrows()
         ]
