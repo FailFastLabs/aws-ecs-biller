@@ -1,17 +1,32 @@
 from datetime import date, timedelta
 import numpy as np
 from django.db.models import Sum
-from django.db.models.functions import TruncDate
+from django.db.models.functions import TruncHour
 
 
 def build_ri_counterfactual(
     account_id: str,
     instance_type: str,
     region: str,
-    reserved_count: float,
+    reserved_count: float = 0,
     days: int = 7,
 ) -> dict:
+    """
+    U-hoop counterfactual: avg daily cost vs reserved capacity level.
+
+    Shape of the U:
+      - Too few reserved  → lots of on-demand overage, cost rises left of minimum
+      - Too many reserved → paying for idle RI capacity, cost rises right of minimum
+      - Bottom of U       → optimal reservation level
+
+    Cost model per hour h:
+        cost(h, R) = R * ri_rate + max(usage_h - R, 0) * od_rate
+    where R is normalized units reserved (continuous).
+    Daily cost = sum over 24 hours of cost(h, R).
+    Avg daily cost = mean over all days.
+    """
     from apps.costs.models import LineItem, InstancePricing
+    from apps.reservations.models import ReservedInstance
 
     if not instance_type or not region:
         return {"data": [], "layout": {"title": "Select an instance type and region"}}
@@ -19,7 +34,7 @@ def build_ri_counterfactual(
     end_date = date.today()
     start_date = end_date - timedelta(days=days)
 
-    base_filter = dict(
+    base = dict(
         instance_type=instance_type,
         region=region,
         service="AmazonEC2",
@@ -27,141 +42,192 @@ def build_ri_counterfactual(
         usage_start__date__lt=end_date,
     )
     if account_id:
-        base_filter["linked_account_id"] = account_id
+        base["linked_account_id"] = account_id
 
-    # Daily usage: combine OD + RI-covered
-    od_daily = (
-        LineItem.objects.filter(**base_filter, line_item_type="Usage", pricing_term="OnDemand")
-        .annotate(day=TruncDate("usage_start"))
-        .values("day")
-        .annotate(qty=Sum("usage_quantity"), cost=Sum("unblended_cost"))
-    )
-    ri_daily = (
-        LineItem.objects.filter(**base_filter, line_item_type="DiscountedUsage")
-        .annotate(day=TruncDate("usage_start"))
-        .values("day")
-        .annotate(qty=Sum("usage_quantity"), ri_cost=Sum("reservation_effective_cost"))
-    )
+    # Collect hourly usage (RI-covered + OD + spot all count as demand)
+    def hourly_qs(extra):
+        return (
+            LineItem.objects.filter(**base, **extra)
+            .annotate(hour=TruncHour("usage_start"))
+            .values("hour")
+            .annotate(qty=Sum("usage_quantity"), cost=Sum("unblended_cost"))
+        )
 
-    # Build daily totals dict
-    daily: dict = {}
-    for row in od_daily:
-        d = str(row["day"])
-        daily.setdefault(d, {"od_qty": 0, "od_cost": 0, "ri_qty": 0, "ri_cost": 0})
-        daily[d]["od_qty"] += float(row["qty"] or 0)
-        daily[d]["od_cost"] += float(row["cost"] or 0)
-    for row in ri_daily:
-        d = str(row["day"])
-        daily.setdefault(d, {"od_qty": 0, "od_cost": 0, "ri_qty": 0, "ri_cost": 0})
-        daily[d]["ri_qty"] += float(row["qty"] or 0)
-        daily[d]["ri_cost"] += float(row["ri_cost"] or 0)
+    ri_hourly  = hourly_qs({"line_item_type": "DiscountedUsage"})
+    od_hourly  = hourly_qs({"line_item_type": "Usage", "pricing_term": "OnDemand"})
+    sp_hourly  = hourly_qs({"line_item_type": "SavingsPlanCoveredUsage"})
 
-    if not daily:
-        return {"data": [], "layout": {"title": f"No usage data for {instance_type} in {region}"}}
+    hourly: dict = {}
+    for row in ri_hourly:
+        h = str(row["hour"])
+        hourly.setdefault(h, {"qty": 0.0, "ri_cost": 0.0, "od_cost": 0.0})
+        hourly[h]["qty"]     += float(row["qty"]  or 0)
+        hourly[h]["ri_cost"] += float(row["cost"] or 0)
+    for row in od_hourly:
+        h = str(row["hour"])
+        hourly.setdefault(h, {"qty": 0.0, "ri_cost": 0.0, "od_cost": 0.0})
+        hourly[h]["qty"]     += float(row["qty"]  or 0)
+        hourly[h]["od_cost"] += float(row["cost"] or 0)
+    for row in sp_hourly:
+        h = str(row["hour"])
+        hourly.setdefault(h, {"qty": 0.0, "ri_cost": 0.0, "od_cost": 0.0})
+        hourly[h]["qty"] += float(row["qty"] or 0)
 
-    # Get pricing
+    if not hourly:
+        return {
+            "data": [],
+            "layout": {"title": f"No usage data for {instance_type} / {region} in last {days}d"},
+        }
+
+    usage_series = np.array([v["qty"] for v in hourly.values()])
+
+    # ── Rates ──────────────────────────────────────────────────────────
     try:
-        pricing = InstancePricing.objects.filter(
-            instance_type=instance_type, region=region
-        ).order_by("-effective_date").first()
-        od_rate = float(pricing.od_hourly) if pricing else 0
-        ri_rate = float(pricing.convertible_1yr_hourly or pricing.standard_1yr_hourly or 0) if pricing else 0
+        pricing = (
+            InstancePricing.objects.filter(instance_type=instance_type, region=region)
+            .order_by("-effective_date")
+            .first()
+        )
+        od_rate = float(pricing.od_hourly) if pricing else 0.0
+        ri_rate = float(
+            (pricing.convertible_1yr_hourly or pricing.standard_1yr_hourly) or 0
+        ) if pricing else 0.0
     except Exception:
-        od_rate = 0
-        ri_rate = 0
+        od_rate = ri_rate = 0.0
 
-    # Fall back: derive od_rate from actual data
+    # Derive OD rate from actual spend if not in pricing table
     if od_rate == 0:
-        total_od_qty = sum(v["od_qty"] for v in daily.values())
-        total_od_cost = sum(v["od_cost"] for v in daily.values())
-        od_rate = total_od_cost / total_od_qty if total_od_qty > 0 else 0.1
+        total_od_qty  = sum(v["od_qty"] for v in
+                            LineItem.objects.filter(**base, line_item_type="Usage", pricing_term="OnDemand")
+                            .values("usage_quantity").values_list("usage_quantity", flat=True))
+        total_od_cost = sum(
+            float(v["od_cost"]) for v in hourly.values()
+        )
+        total_od_qty_h = usage_series[usage_series > 0].sum()
+        od_rate = total_od_cost / total_od_qty_h if total_od_qty_h > 0 else 0.10
 
     if ri_rate == 0:
-        ri_rate = od_rate * 0.4  # typical ~60% discount
+        ri_rate = od_rate * 0.40  # ~60% RI discount is typical
 
-    days_list = sorted(daily.keys())
-    actual_costs = []
-    actual_labels = []
+    # ── U-hoop curve ───────────────────────────────────────────────────
+    # Range from 0 to 150% of peak hourly usage
+    peak = float(usage_series.max()) if len(usage_series) else 1.0
+    r_values = np.linspace(0, peak * 1.5, 120)
 
-    for d in days_list:
-        v = daily[d]
-        # Actual cost: RI-covered at ri_cost + OD at od_cost
-        actual_costs.append(v["ri_cost"] + v["od_cost"])
-        actual_labels.append(d)
+    avg_costs = []
+    for R in r_values:
+        # Per-hour cost = R * ri_rate (committed, always paid) + OD overage
+        hourly_costs = R * ri_rate + np.maximum(usage_series - R, 0) * od_rate
+        # Average over the hours, then scale to a 24-hr day
+        hours_per_day = len(usage_series) / max(days, 1)
+        avg_daily = float(np.mean(hourly_costs)) * max(hours_per_day, 1)
+        avg_costs.append(round(avg_daily, 4))
 
-    avg_actual = np.mean(actual_costs) if actual_costs else 0
+    opt_idx   = int(np.argmin(avg_costs))
+    opt_R     = float(r_values[opt_idx])
+    opt_cost  = avg_costs[opt_idx]
 
-    # Counterfactual curve: cost at different reserved_count values
-    max_qty = max((v["od_qty"] + v["ri_qty"]) for v in daily.values())
-    curve_counts = np.linspace(0, max_qty * 1.3, 60)
-    curve_costs = []
-    for rc in curve_counts:
-        daily_cf_costs = []
-        for v in daily.values():
-            total_qty = v["od_qty"] + v["ri_qty"]
-            below = min(total_qty, rc)
-            above = max(total_qty - rc, 0)
-            # Committed RI cost is fixed regardless of usage (if unused, still pay)
-            ri_committed_cost = rc * ri_rate * 24  # 24 hrs/day
-            od_cost = above * od_rate
-            # Total cost per day = RI commitment + OD overage
-            daily_cf_costs.append(ri_committed_cost + od_cost)
-        curve_costs.append(np.mean(daily_cf_costs))
+    # ── Current reservation level ──────────────────────────────────────
+    ri_qs = ReservedInstance.objects.filter(
+        state="active", instance_type=instance_type, region=region
+    )
+    if account_id:
+        ri_qs = ri_qs.filter(account__account_id=account_id)
+    current_R = sum(float(r["normalized_units"]) for r in ri_qs.values("normalized_units"))
+    if reserved_count > 0:
+        current_R = reserved_count
 
-    # Mark the current actual reserved_count (approximated from RI qty)
-    avg_ri_qty = np.mean([v["ri_qty"] for v in daily.values()])
-    current_rc = reserved_count if reserved_count > 0 else avg_ri_qty
+    # Cost at current_R
+    cur_hourly_costs = current_R * ri_rate + np.maximum(usage_series - current_R, 0) * od_rate
+    hours_per_day = len(usage_series) / max(days, 1)
+    cur_avg_daily = float(np.mean(cur_hourly_costs)) * max(hours_per_day, 1)
 
-    # Cost at requested reserved_count
-    cf_at_rc = []
-    for v in daily.values():
-        total_qty = v["od_qty"] + v["ri_qty"]
-        above = max(total_qty - current_rc, 0)
-        cf_at_rc.append(current_rc * ri_rate * 24 + above * od_rate)
-    avg_cf = np.mean(cf_at_rc) if cf_at_rc else 0
+    # Actual observed avg daily cost
+    actual_daily = sum(v["ri_cost"] + v["od_cost"] for v in hourly.values())
+    actual_avg   = actual_daily / max(days, 1)
 
+    # ── Annotations ───────────────────────────────────────────────────
     traces = [
         {
             "type": "scatter",
             "mode": "lines",
-            "name": "Avg Daily Cost (counterfactual)",
-            "x": curve_counts.tolist(),
-            "y": [round(c, 4) for c in curve_costs],
-            "line": {"color": "#0d6efd", "width": 2},
-            "hovertemplate": "Reserved: %{x:.0f} hrs/day<br>Avg cost: $%{y:.2f}<extra></extra>",
+            "name": "Avg Daily Cost",
+            "x": r_values.tolist(),
+            "y": avg_costs,
+            "line": {"color": "#0d6efd", "width": 2.5},
+            "fill": "tozeroy",
+            "fillcolor": "rgba(13,110,253,0.07)",
+            "hovertemplate": "Reserved: %{x:.1f} units<br>Avg cost/day: $%{y:.2f}<extra></extra>",
         },
         {
             "type": "scatter",
-            "mode": "markers",
-            "name": f"Current (≈{current_rc:.0f} hrs/day reserved)",
-            "x": [current_rc],
-            "y": [round(avg_cf, 4)],
-            "marker": {"color": "#198754", "size": 12, "symbol": "circle"},
-            "hovertemplate": "Reserved: %{x:.0f}<br>Avg cost: $%{y:.2f}<extra></extra>",
+            "mode": "markers+text",
+            "name": f"Optimal ({opt_R:.1f} units) → ${opt_cost:.2f}/day",
+            "x": [opt_R],
+            "y": [opt_cost],
+            "marker": {"color": "#198754", "size": 14, "symbol": "star"},
+            "text": ["Optimal"],
+            "textposition": "top center",
+            "hovertemplate": "Optimal: %{x:.1f} units<br>$%{y:.2f}/day<extra></extra>",
         },
         {
             "type": "scatter",
-            "mode": "markers",
-            "name": f"Actual avg daily cost: ${avg_actual:.2f}",
-            "x": [avg_ri_qty],
-            "y": [round(avg_actual, 4)],
-            "marker": {"color": "#dc3545", "size": 10, "symbol": "x"},
-            "hovertemplate": "Actual avg: $%{y:.2f}<extra></extra>",
+            "mode": "markers+text",
+            "name": f"Current ({current_R:.1f} units) → ${cur_avg_daily:.2f}/day",
+            "x": [current_R],
+            "y": [round(cur_avg_daily, 4)],
+            "marker": {"color": "#fd7e14", "size": 12, "symbol": "circle"},
+            "text": ["Current"],
+            "textposition": "top center",
+            "hovertemplate": "Current: %{x:.1f} units<br>$%{y:.2f}/day<extra></extra>",
         },
     ]
 
+    # Shade "too few" and "too many" regions
+    too_few_mask  = r_values <= opt_R
+    too_many_mask = r_values >= opt_R
+
+    traces.insert(1, {
+        "type": "scatter",
+        "mode": "lines",
+        "name": "Too few (↑ OD cost)",
+        "x": r_values[too_few_mask].tolist(),
+        "y": [avg_costs[i] for i, v in enumerate(too_few_mask) if v],
+        "fill": "tozeroy",
+        "fillcolor": "rgba(220,53,69,0.10)",
+        "line": {"color": "rgba(0,0,0,0)", "width": 0},
+        "showlegend": True,
+        "hoverinfo": "skip",
+    })
+    traces.insert(2, {
+        "type": "scatter",
+        "mode": "lines",
+        "name": "Too many (↑ idle RI cost)",
+        "x": r_values[too_many_mask].tolist(),
+        "y": [avg_costs[i] for i, v in enumerate(too_many_mask) if v],
+        "fill": "tozeroy",
+        "fillcolor": "rgba(255,193,7,0.12)",
+        "line": {"color": "rgba(0,0,0,0)", "width": 0},
+        "showlegend": True,
+        "hoverinfo": "skip",
+    })
+
     layout = {
-        "xaxis": {"title": "Reserved Instance-Hours / Day"},
+        "xaxis": {"title": f"Reserved Normalized Units ({instance_type} / {region})"},
         "yaxis": {"title": "Avg Daily Cost ($)"},
-        "margin": {"t": 20, "b": 50, "l": 70, "r": 20},
+        "margin": {"t": 20, "b": 60, "l": 70, "r": 20},
         "legend": {"orientation": "h", "y": -0.3},
+        "hovermode": "x",
     }
 
     return {
         "data": traces,
         "layout": layout,
-        "avg_actual": round(avg_actual, 2),
-        "avg_counterfactual": round(avg_cf, 2),
+        "avg_actual": round(actual_avg, 2),
+        "avg_counterfactual": round(cur_avg_daily, 2),
+        "optimal_R": round(opt_R, 2),
+        "optimal_cost": round(opt_cost, 2),
+        "current_R": round(current_R, 2),
         "days": days,
         "instance_type": instance_type,
         "region": region,

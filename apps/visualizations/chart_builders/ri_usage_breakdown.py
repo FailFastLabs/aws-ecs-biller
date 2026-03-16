@@ -1,99 +1,142 @@
-import pandas as pd
+from datetime import date, timedelta
 from django.db.models import Sum
+from django.db.models.functions import TruncHour
 
 
-def build_ri_usage_breakdown(account_id: str, billing_period: str, instance_type: str = "", region: str = "", limit: int = 100) -> dict:
+def build_ri_hourly_usage(
+    account_id: str,
+    instance_type: str,
+    region: str,
+    n_days: int = 7,
+) -> dict:
+    """
+    Stacked area chart of hourly EC2 usage for a specific instance_type+region:
+      - RI covered (green, bottom)
+      - On-demand (red, above RI)
+      - Spot (orange, above OD)
+    Plus a horizontal dashed line for currently purchased RI capacity.
+    """
     from apps.costs.models import LineItem
+    from apps.reservations.models import ReservedInstance
 
-    base_filter = dict(billing_period=billing_period, service="AmazonEC2")
+    if not instance_type or not region:
+        return {"data": [], "layout": {"title": "Select an instance type and region"}}
+
+    end_date = date.today()
+    start_date = end_date - timedelta(days=n_days)
+
+    base = dict(
+        instance_type=instance_type,
+        region=region,
+        service="AmazonEC2",
+        usage_start__date__gte=start_date,
+        usage_start__date__lt=end_date,
+    )
     if account_id:
-        base_filter["linked_account_id"] = account_id
+        base["linked_account_id"] = account_id
 
-    # RI-covered usage
-    discounted_qs = (
-        LineItem.objects.filter(**base_filter, line_item_type="DiscountedUsage")
-        .values("instance_type", "region")
-        .annotate(
-            ri_qty=Sum("usage_quantity"),
-            ri_cost=Sum("reservation_effective_cost"),
-            ri_od_equiv=Sum("public_on_demand_cost"),
+    def hourly_qty(extra_filter):
+        return (
+            LineItem.objects.filter(**base, **extra_filter)
+            .annotate(hour=TruncHour("usage_start"))
+            .values("hour")
+            .annotate(qty=Sum("usage_quantity"))
+            .order_by("hour")
         )
+
+    ri_qs    = hourly_qty({"line_item_type": "DiscountedUsage"})
+    od_qs    = hourly_qty({"line_item_type": "Usage", "pricing_term": "OnDemand"})
+    spot_qs  = hourly_qty({"line_item_type": "Usage", "pricing_term": ""})
+
+    # Merge into a dict keyed by hour string
+    hours: dict = {}
+    for row in ri_qs:
+        h = row["hour"].strftime("%Y-%m-%dT%H:%M:%S")
+        hours.setdefault(h, {"ri": 0.0, "od": 0.0, "spot": 0.0})
+        hours[h]["ri"] += float(row["qty"] or 0)
+    for row in od_qs:
+        h = row["hour"].strftime("%Y-%m-%dT%H:%M:%S")
+        hours.setdefault(h, {"ri": 0.0, "od": 0.0, "spot": 0.0})
+        hours[h]["od"] += float(row["qty"] or 0)
+    for row in spot_qs:
+        h = row["hour"].strftime("%Y-%m-%dT%H:%M:%S")
+        hours.setdefault(h, {"ri": 0.0, "od": 0.0, "spot": 0.0})
+        hours[h]["spot"] += float(row["qty"] or 0)
+
+    if not hours:
+        return {
+            "data": [],
+            "layout": {"title": f"No usage data for {instance_type} / {region} in last {n_days} days"},
+        }
+
+    sorted_hours = sorted(hours.keys())
+    ri_y    = [round(hours[h]["ri"],   3) for h in sorted_hours]
+    od_y    = [round(hours[h]["od"],   3) for h in sorted_hours]
+    spot_y  = [round(hours[h]["spot"], 3) for h in sorted_hours]
+
+    # Current purchased RI capacity (normalized units / hr) for this type+region
+    ri_cap_qs = ReservedInstance.objects.filter(
+        state="active", instance_type=instance_type, region=region
     )
-    # On-demand usage
-    od_qs = (
-        LineItem.objects.filter(**base_filter, line_item_type="Usage", pricing_term="OnDemand")
-        .values("instance_type", "region")
-        .annotate(
-            od_qty=Sum("usage_quantity"),
-            od_cost=Sum("unblended_cost"),
-        )
+    if account_id:
+        ri_cap_qs = ri_cap_qs.filter(account__account_id=account_id)
+    ri_capacity = sum(
+        float(r["normalized_units"]) for r in ri_cap_qs.values("normalized_units")
     )
-
-    disc_df = pd.DataFrame(list(discounted_qs))
-    od_df = pd.DataFrame(list(od_qs))
-
-    if disc_df.empty and od_df.empty:
-        return {"data": [], "layout": {"title": "No usage data for this period"}}
-
-    if disc_df.empty:
-        disc_df = pd.DataFrame(columns=["instance_type", "region", "ri_qty", "ri_cost", "ri_od_equiv"])
-    if od_df.empty:
-        od_df = pd.DataFrame(columns=["instance_type", "region", "od_qty", "od_cost"])
-
-    merged = pd.merge(disc_df, od_df, on=["instance_type", "region"], how="outer").fillna(0)
-    merged["total_qty"] = merged["ri_qty"] + merged["od_qty"]
-    merged["total_cost"] = merged["ri_cost"] + merged["od_cost"]
-    merged["coverage_pct"] = (merged["ri_qty"] / merged["total_qty"].replace(0, float("nan"))).fillna(0)
-    merged["ri_savings"] = merged["ri_od_equiv"] - merged["ri_cost"]
-    merged = merged.sort_values("total_qty", ascending=False)
-
-    # Top N for the dropdown — return full list as top_types
-    top = merged.head(limit)
-
-    # If filtering to specific instance_type+region, narrow down
-    if instance_type and region:
-        row = merged[(merged["instance_type"] == instance_type) & (merged["region"] == region)]
-        if not row.empty:
-            chart_df = row
-        else:
-            chart_df = top.head(20)
-    else:
-        chart_df = top.head(20)
-
-    labels = chart_df["instance_type"] + "<br>" + chart_df["region"]
 
     traces = [
         {
-            "type": "bar",
-            "name": "RI Covered (hrs)",
-            "x": labels.tolist(),
-            "y": chart_df["ri_qty"].round(1).tolist(),
-            "marker": {"color": "#198754"},
-            "hovertemplate": "<b>%{x}</b><br>RI hrs: %{y:.1f}<extra></extra>",
+            "type": "scatter",
+            "mode": "lines",
+            "name": "RI Covered",
+            "x": sorted_hours,
+            "y": ri_y,
+            "stackgroup": "usage",
+            "fillcolor": "rgba(25,135,84,0.6)",
+            "line": {"color": "rgba(25,135,84,0.8)", "width": 0.5},
+            "hovertemplate": "RI: %{y:.2f} units<extra></extra>",
         },
         {
-            "type": "bar",
-            "name": "On-Demand (hrs)",
-            "x": labels.tolist(),
-            "y": chart_df["od_qty"].round(1).tolist(),
-            "marker": {"color": "#dc3545"},
-            "hovertemplate": "<b>%{x}</b><br>OD hrs: %{y:.1f}<extra></extra>",
+            "type": "scatter",
+            "mode": "lines",
+            "name": "On-Demand",
+            "x": sorted_hours,
+            "y": od_y,
+            "stackgroup": "usage",
+            "fillcolor": "rgba(220,53,69,0.55)",
+            "line": {"color": "rgba(220,53,69,0.8)", "width": 0.5},
+            "hovertemplate": "OD: %{y:.2f} units<extra></extra>",
+        },
+        {
+            "type": "scatter",
+            "mode": "lines",
+            "name": "Spot",
+            "x": sorted_hours,
+            "y": spot_y,
+            "stackgroup": "usage",
+            "fillcolor": "rgba(255,193,7,0.55)",
+            "line": {"color": "rgba(255,193,7,0.8)", "width": 0.5},
+            "hovertemplate": "Spot: %{y:.2f} units<extra></extra>",
         },
     ]
 
+    if ri_capacity > 0:
+        traces.append({
+            "type": "scatter",
+            "mode": "lines",
+            "name": f"Reserved Capacity ({ri_capacity:.1f} units)",
+            "x": [sorted_hours[0], sorted_hours[-1]],
+            "y": [ri_capacity, ri_capacity],
+            "line": {"color": "#0d6efd", "width": 2, "dash": "dash"},
+            "hovertemplate": f"Reserved: {ri_capacity:.1f} units<extra></extra>",
+        })
+
     layout = {
-        "barmode": "stack",
-        "xaxis": {"title": "", "tickangle": -35},
-        "yaxis": {"title": "Instance-Hours"},
-        "legend": {"orientation": "h", "y": -0.35},
-        "margin": {"t": 20, "b": 120, "l": 60, "r": 20},
+        "xaxis": {"title": "", "type": "date"},
+        "yaxis": {"title": "Normalized Instance-Units"},
+        "legend": {"orientation": "h", "y": -0.25},
+        "margin": {"t": 20, "b": 80, "l": 60, "r": 20},
+        "hovermode": "x unified",
     }
 
-    # Pass top_types list in layout extras for the dropdown
-    top_types = [
-        {"instance_type": r["instance_type"], "region": r["region"]}
-        for r in merged.head(limit)[["instance_type", "region"]].to_dict("records")
-        if r["instance_type"]
-    ]
-
-    return {"data": traces, "layout": layout, "top_types": top_types}
+    return {"data": traces, "layout": layout}

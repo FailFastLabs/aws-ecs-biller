@@ -20,59 +20,82 @@
   </form>
 </div>
 
-<!-- ── Section 1: Usage Breakdown ──────────────────────────────────────── -->
+<!-- ── Global controls ─────────────────────────────────────────────────── -->
+<div class="chart-card mb-3 py-2">
+  <div class="d-flex gap-3 align-items-center flex-wrap">
+    <div class="d-flex align-items-center gap-2">
+      <label class="form-label mb-0 small fw-semibold">Instance / Region:</label>
+      <select id="usage-type-select" class="form-select form-select-sm" style="min-width:230px">
+        {% for t in top_usage_types %}
+          <option value="{{ t.instance_type }}|{{ t.region }}"
+            {% if t.instance_type == sel_type and t.region == sel_region %}selected{% endif %}>
+            {{ t.instance_type }} / {{ t.region }}
+          </option>
+        {% endfor %}
+        {% if not top_usage_types %}
+          <option value="">No data for {{ billing_period }}</option>
+        {% endif %}
+      </select>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+      <label class="form-label mb-0 small fw-semibold">Last N days:</label>
+      <select id="n-days-select" class="form-select form-select-sm" style="width:80px">
+        <option value="7"  {% if days == 7  %}selected{% endif %}>7d</option>
+        <option value="14" {% if days == 14 %}selected{% endif %}>14d</option>
+        <option value="30" {% if days == 30 %}selected{% endif %}>30d</option>
+        <option value="60" {% if days == 60 %}selected{% endif %}>60d</option>
+        <option value="90" {% if days == 90 %}selected{% endif %}>90d</option>
+      </select>
+    </div>
+    <small class="text-muted">Both charts below update when you change these.</small>
+  </div>
+</div>
+
+<!-- ── Section 1: Hourly Usage Time-Series ─────────────────────────────── -->
 <div class="row g-3 mb-3">
   <div class="col-12">
     <div class="chart-card">
-      <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
-        <h6 class="mb-0">EC2 Usage — RI Covered vs On-Demand</h6>
+      <div class="d-flex align-items-center justify-content-between mb-1">
+        <div>
+          <h6 class="mb-0">Hourly EC2 Usage — RI Covered · On-Demand · Spot</h6>
+          <small class="text-muted" id="usage-subtitle">
+            {{ sel_type }} / {{ sel_region }} &nbsp;·&nbsp; last {{ days }} days
+          </small>
+        </div>
         <div class="d-flex gap-2 align-items-center">
-          <select id="usage-type-select" class="form-select form-select-sm" style="min-width:220px">
-            <option value="">Top 20 (all)</option>
-            {% for t in top_usage_types %}
-              <option value="{{ t.instance_type }}|{{ t.region }}"
-                {% if t.instance_type == sel_type and t.region == sel_region %}selected{% endif %}>
-                {{ t.instance_type }} / {{ t.region }}
-              </option>
-            {% endfor %}
-          </select>
+          <span class="badge" style="background:#198754">RI Covered</span>
+          <span class="badge" style="background:#dc3545">On-Demand</span>
+          <span class="badge" style="background:#ffc107;color:#000">Spot</span>
+          <span class="badge" style="background:#0d6efd">── Reserved capacity</span>
         </div>
       </div>
-      <div id="chart-usage-breakdown" style="min-height:360px"></div>
+      <div id="chart-usage-breakdown" style="min-height:380px"></div>
     </div>
   </div>
 </div>
 
-<!-- ── Section 2: Counterfactual "U hoop" ──────────────────────────────── -->
+<!-- ── Section 2: Counterfactual U-hoop ────────────────────────────────── -->
 <div class="row g-3 mb-3">
   <div class="col-12">
     <div class="chart-card">
-      <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
+      <div class="d-flex align-items-center justify-content-between mb-1 flex-wrap gap-2">
         <div>
-          <h6 class="mb-0">Counterfactual: What If We Had X Reserved?</h6>
+          <h6 class="mb-0">Counterfactual — Optimal Reservation Level</h6>
           <small class="text-muted">
-            Showing <strong id="cf-type-label">{{ sel_type }} / {{ sel_region }}</strong>
-            — avg daily cost over last
-            <strong id="cf-days-label">{{ days }}</strong> days
+            Too few reserved → on-demand costs rise.&nbsp;
+            Too many → idle RI costs rise.&nbsp;
+            The bottom of the U is optimal.
           </small>
         </div>
-        <div class="d-flex gap-2 align-items-center flex-wrap">
-          <label class="form-label mb-0 small">Days:</label>
-          <select id="cf-days-select" class="form-select form-select-sm" style="width:90px">
-              <option value="7"  {% if days == 7  %}selected{% endif %}>7d</option>
-            <option value="14" {% if days == 14 %}selected{% endif %}>14d</option>
-            <option value="30" {% if days == 30 %}selected{% endif %}>30d</option>
-            <option value="60" {% if days == 60 %}selected{% endif %}>60d</option>
-            <option value="90" {% if days == 90 %}selected{% endif %}>90d</option>
-          </select>
-          <label class="form-label mb-0 small">Reserved hrs/day:</label>
-          <input id="cf-count-input" type="number" class="form-control form-control-sm" style="width:90px"
-            value="{{ reserved_count }}" min="0" step="1" placeholder="0">
-          <button id="cf-refresh" class="btn btn-sm btn-primary">Refresh</button>
+        <div class="d-flex gap-2 align-items-center">
+          <label class="form-label mb-0 small">Test reservation:</label>
+          <input id="cf-count-input" type="number" class="form-control form-control-sm" style="width:100px"
+            value="{{ reserved_count }}" min="0" step="1" placeholder="units">
+          <button id="cf-refresh" class="btn btn-sm btn-primary">Plot</button>
         </div>
       </div>
-      <div id="chart-counterfactual" style="min-height:320px"></div>
-      <div id="cf-summary" class="mt-2 small text-muted"></div>
+      <div id="chart-counterfactual" style="min-height:340px"></div>
+      <div id="cf-summary" class="mt-2 small text-muted d-flex gap-3 flex-wrap"></div>
     </div>
   </div>
 </div>
@@ -81,7 +104,7 @@
 <div class="row g-3 mb-3">
   <div class="col-12">
     <div class="chart-card">
-      <h6>Time to Expiration — RI &amp; Savings Plan $/hr at Risk</h6>
+      <h6>Time to Expiration — RI $/hr by Family &amp; Savings Plan Commitment</h6>
       <div id="chart-expiry" style="min-height:360px"></div>
     </div>
   </div>
@@ -94,10 +117,10 @@
       <h6>Active Reserved Instances ({{ ri_list|length }})</h6>
       {% if ri_list %}
       <div class="table-responsive">
-        <table class="table table-sm table-hover mb-0" id="ri-table">
+        <table class="table table-sm table-hover mb-0">
           <thead class="table-dark">
             <tr>
-              <th>ID</th>
+              <th>Reservation ID</th>
               <th>Type</th>
               <th>Region</th>
               <th>Class</th>
@@ -113,16 +136,20 @@
           <tbody>
             {% for ri in ri_list %}
             <tr>
-              <td><small class="text-muted font-monospace">{{ ri.reservation_id|truncatechars:16 }}</small></td>
+              <td><small class="text-muted font-monospace">{{ ri.reservation_id|truncatechars:20 }}</small></td>
               <td><strong>{{ ri.instance_type }}</strong></td>
               <td>{{ ri.region }}</td>
-              <td><span class="badge bg-{% if ri.offering_class == 'convertible' %}info text-dark{% else %}secondary{% endif %}">{{ ri.offering_class }}</span></td>
+              <td>
+                <span class="badge bg-{% if ri.offering_class == 'convertible' %}info text-dark{% else %}secondary{% endif %}">
+                  {{ ri.offering_class }}
+                </span>
+              </td>
               <td><small>{{ ri.platform|default:"—" }}</small></td>
               <td class="text-end">{{ ri.instance_count }}</td>
               <td class="text-end">{{ ri.normalized_units|floatformat:1 }}</td>
               <td class="text-end">${{ ri.recurring_hourly_cost|floatformat:4 }}</td>
               <td><small>{{ ri.start_date }}</small></td>
-              <td><small class="{% if ri.end_date %}text-warning{% endif %}">{{ ri.end_date }}</small></td>
+              <td><small>{{ ri.end_date }}</small></td>
               <td class="text-end days-left" data-end="{{ ri.end_date }}">—</td>
             </tr>
             {% endfor %}
@@ -157,11 +184,11 @@
           <tbody>
             {% for sp in sp_list %}
             <tr>
-              <td><small class="text-muted font-monospace">{{ sp.savings_plan_id|truncatechars:20 }}</small></td>
+              <td><small class="text-muted font-monospace">{{ sp.savings_plan_id|truncatechars:24 }}</small></td>
               <td>{{ sp.plan_type }}</td>
               <td class="text-end">${{ sp.commitment_hourly|floatformat:4 }}</td>
               <td><small>{{ sp.start_date }}</small></td>
-              <td><small class="text-warning">{{ sp.end_date }}</small></td>
+              <td><small>{{ sp.end_date }}</small></td>
               <td class="text-end days-left" data-end="{{ sp.end_date }}">—</td>
             </tr>
             {% endfor %}
@@ -178,16 +205,14 @@
 
 {% block extra_js %}
 <script>
-const bp     = "{{ billing_period }}";
 const acct   = "{{ account_id }}";
 let selType  = "{{ sel_type }}";
 let selRegion= "{{ sel_region }}";
-let cfDays   = {{ days }};
+let nDays    = {{ days }};
 let cfCount  = parseFloat("{{ reserved_count }}") || 0;
 
-// ── Days-left calculation ──────────────────────────────────────────────
-const today = new Date();
-today.setHours(0,0,0,0);
+// ── Days-left badges ───────────────────────────────────────────────────
+const today = new Date(); today.setHours(0,0,0,0);
 document.querySelectorAll('.days-left').forEach(td => {
   const end = new Date(td.dataset.end);
   if (!isNaN(end)) {
@@ -197,70 +222,75 @@ document.querySelectorAll('.days-left').forEach(td => {
   }
 });
 
-// ── Usage breakdown chart ──────────────────────────────────────────────
-function loadUsageBreakdown(it, reg) {
-  let url = `/api/v1/viz/ri-usage-breakdown/?billing_period=${bp}&account_id=${acct}`;
-  if (it && reg) url += `&instance_type=${encodeURIComponent(it)}&region=${encodeURIComponent(reg)}`;
+// ── Chart 1: hourly usage stacked area ────────────────────────────────
+function loadUsageBreakdown() {
+  if (!selType || !selRegion) return;
+  const url = `/api/v1/viz/ri-usage-breakdown/?account_id=${acct}` +
+    `&instance_type=${encodeURIComponent(selType)}&region=${encodeURIComponent(selRegion)}` +
+    `&n_days=${nDays}`;
+  document.getElementById('usage-subtitle').textContent =
+    `${selType} / ${selRegion} · last ${nDays} days`;
   loadChart('chart-usage-breakdown', url);
 }
-loadUsageBreakdown(selType, selRegion);
 
-document.getElementById('usage-type-select').addEventListener('change', function() {
-  const parts = this.value.split('|');
-  selType   = parts[0] || '';
-  selRegion = parts[1] || '';
-  loadUsageBreakdown(selType, selRegion);
-  loadCounterfactual();
-  document.getElementById('cf-type-label').textContent =
-    selType ? `${selType} / ${selRegion}` : '(all)';
-});
-
-// ── Counterfactual chart ───────────────────────────────────────────────
+// ── Chart 2: counterfactual U-hoop ────────────────────────────────────
 function loadCounterfactual() {
   if (!selType || !selRegion) {
     document.getElementById('chart-counterfactual').innerHTML =
-      '<div class="text-muted text-center py-5">Select an instance type from the dropdown above</div>';
+      '<div class="text-muted text-center py-5">Select an instance type above</div>';
     return;
   }
   const url = `/api/v1/viz/ri-counterfactual/?account_id=${acct}` +
     `&instance_type=${encodeURIComponent(selType)}&region=${encodeURIComponent(selRegion)}` +
-    `&reserved_count=${cfCount}&days=${cfDays}`;
+    `&reserved_count=${cfCount}&days=${nDays}`;
 
   fetch(url)
     .then(r => r.json())
     .then(data => {
       const layout = Object.assign({
-        margin: {t: 30, r: 20, b: 80, l: 70},
+        margin: {t: 20, r: 20, b: 80, l: 70},
         paper_bgcolor: 'transparent',
-        plot_bgcolor: 'transparent',
+        plot_bgcolor:  'transparent',
         font: {family: 'system-ui, sans-serif', size: 12},
-        legend: {orientation: 'h', y: -0.35},
+        legend: {orientation: 'h', y: -0.3},
         autosize: true,
       }, data.layout || {});
-      Plotly.newPlot('chart-counterfactual', data.data || [], layout, {responsive: true, displayModeBar: false});
+      Plotly.newPlot('chart-counterfactual', data.data || [], layout,
+        {responsive: true, displayModeBar: false});
 
-      if (data.avg_actual !== undefined) {
-        const savings = data.avg_actual - data.avg_counterfactual;
-        const pct = data.avg_actual > 0 ? (savings / data.avg_actual * 100).toFixed(1) : 0;
-        document.getElementById('cf-summary').innerHTML =
-          `Actual avg daily cost: <strong>$${data.avg_actual.toFixed(2)}</strong> &nbsp;|&nbsp; ` +
-          `Counterfactual at ${cfCount} reserved: <strong>$${data.avg_counterfactual.toFixed(2)}</strong> &nbsp;|&nbsp; ` +
-          (savings > 0
-            ? `<span class="text-success">Save ~$${savings.toFixed(2)}/day (${pct}%)</span>`
-            : `<span class="text-danger">Cost +$${Math.abs(savings).toFixed(2)}/day vs actual</span>`);
+      const sumEl = document.getElementById('cf-summary');
+      if (data.optimal_R !== undefined) {
+        const saving = data.avg_counterfactual - data.optimal_cost;
+        sumEl.innerHTML =
+          `<span>Actual avg/day: <strong>$${data.avg_actual.toFixed(2)}</strong></span>` +
+          `<span>Current (${data.current_R} units) avg/day: <strong>$${data.avg_counterfactual.toFixed(2)}</strong></span>` +
+          `<span class="text-success">Optimal: <strong>${data.optimal_R} units → $${data.optimal_cost.toFixed(2)}/day</strong></span>` +
+          (saving > 0.005
+            ? `<span class="text-warning">Potential saving vs current: <strong>$${saving.toFixed(2)}/day</strong></span>`
+            : `<span class="text-success">Already at or near optimal</span>`);
       }
     })
     .catch(() => {
       document.getElementById('chart-counterfactual').innerHTML =
-        '<div class="text-muted text-center py-5">No data available</div>';
+        '<div class="text-muted text-center py-5">No usage data available for this selection</div>';
     });
 }
-loadCounterfactual();
 
-document.getElementById('cf-days-select').addEventListener('change', function() {
-  cfDays = parseInt(this.value);
-  document.getElementById('cf-days-label').textContent = cfDays;
+// ── Wire up controls ───────────────────────────────────────────────────
+function refreshAll() {
+  loadUsageBreakdown();
   loadCounterfactual();
+}
+
+document.getElementById('usage-type-select').addEventListener('change', function() {
+  const [it, reg] = this.value.split('|');
+  selType = it || ''; selRegion = reg || '';
+  refreshAll();
+});
+
+document.getElementById('n-days-select').addEventListener('change', function() {
+  nDays = parseInt(this.value);
+  refreshAll();
 });
 
 document.getElementById('cf-refresh').addEventListener('click', function() {
@@ -271,7 +301,10 @@ document.getElementById('cf-count-input').addEventListener('keydown', function(e
   if (e.key === 'Enter') { cfCount = parseFloat(this.value) || 0; loadCounterfactual(); }
 });
 
-// ── Expiry timeline chart ──────────────────────────────────────────────
+// ── Expiry timeline (static, account-scoped) ───────────────────────────
 loadChart('chart-expiry', `/api/v1/viz/ri-expiry-timeline/?account_id=${acct}`);
+
+// ── Initial load ───────────────────────────────────────────────────────
+refreshAll();
 </script>
 {% endblock %}

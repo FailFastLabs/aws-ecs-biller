@@ -82,13 +82,12 @@ class SpotVsOdChartView(APIView):
 
 class RiUsageBreakdownView(APIView):
     def get(self, request):
-        from .chart_builders.ri_usage_breakdown import build_ri_usage_breakdown
-        return Response(build_ri_usage_breakdown(
+        from .chart_builders.ri_usage_breakdown import build_ri_hourly_usage
+        return Response(build_ri_hourly_usage(
             account_id=request.query_params.get("account_id", ""),
-            billing_period=request.query_params.get("billing_period", ""),
             instance_type=request.query_params.get("instance_type", ""),
             region=request.query_params.get("region", ""),
-            limit=int(request.query_params.get("limit", 100)),
+            n_days=int(request.query_params.get("n_days", 7)),
         ))
 
 
