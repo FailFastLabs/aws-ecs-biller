@@ -43,39 +43,38 @@ def build_ri_expiry_timeline(account_id: str = "") -> dict:
         y = [ri_by_date_family.get((d, fam), 0) for d in all_dates]
         if all(v == 0 for v in y):
             continue
+        color_hex = palette[i % len(palette)]
         ri_traces.append({
-            "type": "bar",
+            "type": "scatter",
+            "mode": "lines",
             "name": fam,
             "x": all_dates,
             "y": [round(v, 4) for v in y],
-            "marker": {"color": palette[i % len(palette)]},
-            "hovertemplate": f"<b>{fam}</b><br>Date: %{{x}}<br>$/hr: %{{y:.4f}}<extra></extra>",
+            "stackgroup": "ri",
+            "fillcolor": color_hex + "99",   # ~60% opacity
+            "line": {"color": color_hex, "width": 0.5},
+            "hovertemplate": f"<b>{fam}</b><br>%{{x}}<br>$/hr: %{{y:.4f}}<extra></extra>",
         })
 
     sp_trace = {
         "type": "scatter",
         "mode": "lines+markers",
-        "name": "Savings Plans ($/hr commitment)",
+        "name": "Savings Plans ($/hr)",
         "x": all_dates,
         "y": [round(sp_by_date.get(d, 0), 4) for d in all_dates],
-        "yaxis": "y2",
+        "stackgroup": "sp",
+        "fillcolor": "rgba(220,53,69,0.25)",
         "line": {"color": "#dc3545", "width": 2, "dash": "dot"},
         "marker": {"size": 6},
         "hovertemplate": "SP commitment: $%{y:.4f}/hr<extra></extra>",
     }
 
     layout = {
-        "barmode": "stack",
         "xaxis": {"title": "Expiration Date", "type": "category", "tickangle": -35},
-        "yaxis": {"title": "RI $/hr at expiry"},
-        "yaxis2": {
-            "title": "SP $/hr",
-            "overlaying": "y",
-            "side": "right",
-            "showgrid": False,
-        },
+        "yaxis": {"title": "$/hr commitment expiring"},
         "legend": {"orientation": "h", "y": -0.35},
-        "margin": {"t": 20, "b": 130, "l": 60, "r": 60},
+        "margin": {"t": 20, "b": 130, "l": 60, "r": 20},
+        "hovermode": "x unified",
     }
 
     return {"data": ri_traces + [sp_trace], "layout": layout}

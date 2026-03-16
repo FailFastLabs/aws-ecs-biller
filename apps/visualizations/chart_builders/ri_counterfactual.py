@@ -110,16 +110,27 @@ def build_ri_counterfactual(
         ri_rate = od_rate * 0.40  # ~60% RI discount is typical
 
     # ── U-hoop curve ───────────────────────────────────────────────────
-    # Range from 0 to 150% of peak hourly usage
+    # First pass: wide range to locate the optimal point
     peak = float(usage_series.max()) if len(usage_series) else 1.0
-    r_values = np.linspace(0, peak * 1.5, 120)
+    hours_per_day = len(usage_series) / max(days, 1)
+    wide_r = np.linspace(0, peak * 2, 200)
+    wide_costs = []
+    for R in wide_r:
+        hc = R * ri_rate + np.maximum(usage_series - R, 0) * od_rate
+        wide_costs.append(float(np.mean(hc)) * max(hours_per_day, 1))
+
+    opt_idx_wide = int(np.argmin(wide_costs))
+    opt_R_wide   = float(wide_r[opt_idx_wide])
+
+    # Display range: 0 → max(current_R, opt_R) * 1.1  (at least peak so the U is visible)
+    display_max = max(current_R, opt_R_wide) * 1.1
+    display_max = max(display_max, peak * 0.5)   # always show at least half of peak
+    r_values = np.linspace(0, display_max, 120)
 
     avg_costs = []
     for R in r_values:
         # Per-hour cost = R * ri_rate (committed, always paid) + OD overage
         hourly_costs = R * ri_rate + np.maximum(usage_series - R, 0) * od_rate
-        # Average over the hours, then scale to a 24-hr day
-        hours_per_day = len(usage_series) / max(days, 1)
         avg_daily = float(np.mean(hourly_costs)) * max(hours_per_day, 1)
         avg_costs.append(round(avg_daily, 4))
 
