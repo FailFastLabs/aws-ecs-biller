@@ -97,20 +97,25 @@ def build_ri_counterfactual(
 
     # Derive OD rate from actual spend if not in pricing table
     if od_rate == 0:
-        total_od_qty  = sum(v["od_qty"] for v in
-                            LineItem.objects.filter(**base, line_item_type="Usage", pricing_term="OnDemand")
-                            .values("usage_quantity").values_list("usage_quantity", flat=True))
-        total_od_cost = sum(
-            float(v["od_cost"]) for v in hourly.values()
-        )
-        total_od_qty_h = usage_series[usage_series > 0].sum()
-        od_rate = total_od_cost / total_od_qty_h if total_od_qty_h > 0 else 0.10
+        total_od_cost = sum(float(v["od_cost"]) for v in hourly.values())
+        total_od_qty  = sum(float(v["qty"]) for v in hourly.values())
+        od_rate = total_od_cost / total_od_qty if total_od_qty > 0 else 0.10
 
     if ri_rate == 0:
         ri_rate = od_rate * 0.40  # ~60% RI discount is typical
 
+    # ── Current reservation level (must be resolved before computing range) ──
+    ri_qs = ReservedInstance.objects.filter(
+        state="active", instance_type=instance_type, region=region
+    )
+    if account_id:
+        ri_qs = ri_qs.filter(account__account_id=account_id)
+    current_R = sum(float(r["normalized_units"]) for r in ri_qs.values("normalized_units"))
+    if reserved_count > 0:
+        current_R = reserved_count
+
     # ── U-hoop curve ───────────────────────────────────────────────────
-    # First pass: wide range to locate the optimal point
+    # First pass over a wide range to locate the optimal point
     peak = float(usage_series.max()) if len(usage_series) else 1.0
     hours_per_day = len(usage_series) / max(days, 1)
     wide_r = np.linspace(0, peak * 2, 200)
@@ -122,35 +127,23 @@ def build_ri_counterfactual(
     opt_idx_wide = int(np.argmin(wide_costs))
     opt_R_wide   = float(wide_r[opt_idx_wide])
 
-    # Display range: 0 → max(current_R, opt_R) * 1.1  (at least peak so the U is visible)
+    # Display range: 0 → max(current_R, opt_R) * 1.1  (floor at half of peak)
     display_max = max(current_R, opt_R_wide) * 1.1
-    display_max = max(display_max, peak * 0.5)   # always show at least half of peak
+    display_max = max(display_max, peak * 0.5)
     r_values = np.linspace(0, display_max, 120)
 
     avg_costs = []
     for R in r_values:
-        # Per-hour cost = R * ri_rate (committed, always paid) + OD overage
         hourly_costs = R * ri_rate + np.maximum(usage_series - R, 0) * od_rate
         avg_daily = float(np.mean(hourly_costs)) * max(hours_per_day, 1)
         avg_costs.append(round(avg_daily, 4))
 
-    opt_idx   = int(np.argmin(avg_costs))
-    opt_R     = float(r_values[opt_idx])
-    opt_cost  = avg_costs[opt_idx]
-
-    # ── Current reservation level ──────────────────────────────────────
-    ri_qs = ReservedInstance.objects.filter(
-        state="active", instance_type=instance_type, region=region
-    )
-    if account_id:
-        ri_qs = ri_qs.filter(account__account_id=account_id)
-    current_R = sum(float(r["normalized_units"]) for r in ri_qs.values("normalized_units"))
-    if reserved_count > 0:
-        current_R = reserved_count
+    opt_idx  = int(np.argmin(avg_costs))
+    opt_R    = float(r_values[opt_idx])
+    opt_cost = avg_costs[opt_idx]
 
     # Cost at current_R
     cur_hourly_costs = current_R * ri_rate + np.maximum(usage_series - current_R, 0) * od_rate
-    hours_per_day = len(usage_series) / max(days, 1)
     cur_avg_daily = float(np.mean(cur_hourly_costs)) * max(hours_per_day, 1)
 
     # Actual observed avg daily cost
