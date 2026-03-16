@@ -11,9 +11,10 @@ def build_ri_hourly_usage(
 ) -> dict:
     """
     Stacked area chart of hourly EC2 usage for a specific instance_type+region:
-      - RI covered (green, bottom)
-      - On-demand (red, above RI)
-      - Spot (orange, above OD)
+      - RI Covered           (green,  bottom)
+      - Savings Plan Covered (purple, above RI — only SP rows for this instance type)
+      - On-Demand            (red,    above SP)
+      - Spot                 (yellow, top)
     Plus a horizontal dashed line for currently purchased RI capacity.
     """
     from apps.costs.models import LineItem
@@ -44,24 +45,18 @@ def build_ri_hourly_usage(
             .order_by("hour")
         )
 
-    ri_qs    = hourly_qty({"line_item_type": "DiscountedUsage"})
-    od_qs    = hourly_qty({"line_item_type": "Usage", "pricing_term": "OnDemand"})
-    spot_qs  = hourly_qty({"line_item_type": "Usage", "pricing_term": ""})
+    ri_qs   = hourly_qty({"line_item_type": "DiscountedUsage"})
+    sp_qs   = hourly_qty({"line_item_type": "SavingsPlanCoveredUsage"})
+    od_qs   = hourly_qty({"line_item_type": "Usage", "pricing_term": "OnDemand"})
+    spot_qs = hourly_qty({"line_item_type": "Usage", "pricing_term": ""})
 
     # Merge into a dict keyed by hour string
     hours: dict = {}
-    for row in ri_qs:
-        h = row["hour"].strftime("%Y-%m-%dT%H:%M:%S")
-        hours.setdefault(h, {"ri": 0.0, "od": 0.0, "spot": 0.0})
-        hours[h]["ri"] += float(row["qty"] or 0)
-    for row in od_qs:
-        h = row["hour"].strftime("%Y-%m-%dT%H:%M:%S")
-        hours.setdefault(h, {"ri": 0.0, "od": 0.0, "spot": 0.0})
-        hours[h]["od"] += float(row["qty"] or 0)
-    for row in spot_qs:
-        h = row["hour"].strftime("%Y-%m-%dT%H:%M:%S")
-        hours.setdefault(h, {"ri": 0.0, "od": 0.0, "spot": 0.0})
-        hours[h]["spot"] += float(row["qty"] or 0)
+    for label, qs in [("ri", ri_qs), ("sp", sp_qs), ("od", od_qs), ("spot", spot_qs)]:
+        for row in qs:
+            h = row["hour"].strftime("%Y-%m-%dT%H:%M:%S")
+            hours.setdefault(h, {"ri": 0.0, "sp": 0.0, "od": 0.0, "spot": 0.0})
+            hours[h][label] += float(row["qty"] or 0)
 
     if not hours:
         return {
@@ -70,9 +65,10 @@ def build_ri_hourly_usage(
         }
 
     sorted_hours = sorted(hours.keys())
-    ri_y    = [round(hours[h]["ri"],   3) for h in sorted_hours]
-    od_y    = [round(hours[h]["od"],   3) for h in sorted_hours]
-    spot_y  = [round(hours[h]["spot"], 3) for h in sorted_hours]
+    ri_y   = [round(hours[h]["ri"],   3) for h in sorted_hours]
+    sp_y   = [round(hours[h]["sp"],   3) for h in sorted_hours]
+    od_y   = [round(hours[h]["od"],   3) for h in sorted_hours]
+    spot_y = [round(hours[h]["spot"], 3) for h in sorted_hours]
 
     # Current purchased RI capacity (normalized units / hr) for this type+region
     ri_cap_qs = ReservedInstance.objects.filter(
@@ -88,13 +84,24 @@ def build_ri_hourly_usage(
         {
             "type": "scatter",
             "mode": "lines",
-            "name": "RI Covered",
+            "name": "Reserved (RI)",
             "x": sorted_hours,
             "y": ri_y,
             "stackgroup": "usage",
             "fillcolor": "rgba(25,135,84,0.6)",
             "line": {"color": "rgba(25,135,84,0.8)", "width": 0.5},
             "hovertemplate": "RI: %{y:.2f} units<extra></extra>",
+        },
+        {
+            "type": "scatter",
+            "mode": "lines",
+            "name": "Savings Plan",
+            "x": sorted_hours,
+            "y": sp_y,
+            "stackgroup": "usage",
+            "fillcolor": "rgba(111,66,193,0.55)",
+            "line": {"color": "rgba(111,66,193,0.8)", "width": 0.5},
+            "hovertemplate": "SP: %{y:.2f} units<extra></extra>",
         },
         {
             "type": "scatter",
