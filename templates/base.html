@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}AWS Cost Analyzer{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <script src="https://cdn.plot.ly/plotly-2.35.0.min.js" charset="utf-8"></script>
+  <style>
+    body { background: #f8f9fa; }
+    .sidebar {
+      min-height: 100vh;
+      width: 220px;
+      background: #1a1f36;
+      color: #c9d1e0;
+      flex-shrink: 0;
+      position: sticky;
+      top: 0;
+    }
+    .sidebar .brand {
+      padding: 1.25rem 1.5rem;
+      font-size: 1rem;
+      font-weight: 700;
+      color: #fff;
+      border-bottom: 1px solid #2d3452;
+    }
+    .sidebar .brand span { color: #7c8cf8; }
+    .sidebar .nav-link {
+      color: #c9d1e0;
+      padding: .55rem 1.5rem;
+      font-size: .875rem;
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      border-radius: 0;
+    }
+    .sidebar .nav-link:hover, .sidebar .nav-link.active {
+      color: #fff;
+      background: #2d3452;
+    }
+    .sidebar .nav-link i { font-size: 1rem; opacity: .75; }
+    .main-content { flex: 1; min-width: 0; padding: 1.75rem 2rem; }
+    .page-header { margin-bottom: 1.5rem; }
+    .page-header h1 { font-size: 1.5rem; font-weight: 700; margin: 0; }
+    .card { border: none; border-radius: .75rem; box-shadow: 0 1px 4px rgba(0,0,0,.07); }
+    .card-title { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: #6c757d; margin-bottom: .25rem; }
+    .stat-value { font-size: 1.75rem; font-weight: 700; }
+    .chart-card { background: #fff; border-radius: .75rem; box-shadow: 0 1px 4px rgba(0,0,0,.07); padding: 1.25rem 1.5rem; }
+    .chart-card h6 { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: #6c757d; margin-bottom: 1rem; }
+    .filter-bar { background: #fff; border-radius: .75rem; padding: 1rem 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.07); }
+    .badge-spike { background: #fee2e2; color: #dc2626; }
+    .badge-drop { background: #dbeafe; color: #2563eb; }
+    .plotly-chart { min-height: 350px; }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+<div class="d-flex">
+
+  <!-- Sidebar -->
+  <nav class="sidebar d-flex flex-column">
+    <div class="brand">AWS <span>Cost Analyzer</span></div>
+    <ul class="nav flex-column mt-2">
+      <li class="nav-item">
+        <a class="nav-link {% block nav_dashboard %}{% endblock %}" href="/">
+          <i class="bi bi-speedometer2"></i> Dashboard
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {% block nav_costs %}{% endblock %}" href="/costs/">
+          <i class="bi bi-bar-chart-line"></i> Cost Explorer
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {% block nav_reservations %}{% endblock %}" href="/reservations/">
+          <i class="bi bi-bookmark-check"></i> Reservations
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {% block nav_anomalies %}{% endblock %}" href="/anomalies/">
+          <i class="bi bi-exclamation-triangle"></i> Anomalies
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {% block nav_forecasting %}{% endblock %}" href="/forecasting/">
+          <i class="bi bi-graph-up-arrow"></i> Forecasting
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {% block nav_splitting %}{% endblock %}" href="/splitting/">
+          <i class="bi bi-diagram-3"></i> Cost Splitting
+        </a>
+      </li>
+    </ul>
+    <div class="mt-auto p-3" style="font-size:.7rem; color:#4a5270;">
+      <a href="/admin/" class="text-decoration-none" style="color:#4a5270;">
+        <i class="bi bi-gear"></i> Admin
+      </a>
+    </div>
+  </nav>
+
+  <!-- Main -->
+  <div class="main-content">
+    {% block content %}{% endblock %}
+  </div>
+
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+function loadChart(divId, url, layout_override) {
+  fetch(url)
+    .then(r => r.json())
+    .then(data => {
+      const layout = Object.assign({
+        margin: {t: 30, r: 20, b: 50, l: 60},
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: {family: 'system-ui, sans-serif', size: 12},
+        legend: {orientation: 'h', y: -0.2},
+        autosize: true,
+      }, data.layout || {}, layout_override || {});
+      Plotly.newPlot(divId, data.data || [], layout, {responsive: true, displayModeBar: false});
+    })
+    .catch(e => {
+      document.getElementById(divId).innerHTML =
+        '<div class="text-muted text-center py-5"><i class="bi bi-bar-chart" style="font-size:2rem"></i><br>No data yet</div>';
+    });
+}
+</script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

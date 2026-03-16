@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Reservations — AWS Cost Analyzer{% endblock %}
+{% block nav_reservations %}active{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex align-items-center justify-content-between">
+  <h1>Reservations &amp; Savings Plans</h1>
+  <form class="d-flex gap-2 align-items-center" method="get">
+    <select name="account_id" class="form-select form-select-sm" style="min-width:180px" onchange="this.form.submit()">
+      <option value="">All accounts</option>
+      {% for a in accounts %}
+        <option value="{{ a.account_id }}" {% if a.account_id == account_id %}selected{% endif %}>
+          {{ a.account_name }}
+        </option>
+      {% endfor %}
+    </select>
+    <select name="billing_period" class="form-select form-select-sm" onchange="this.form.submit()">
+      {% for p in billing_periods %}
+        <option value="{{ p }}" {% if p == billing_period %}selected{% endif %}>{{ p }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
+
+<!-- RI Coverage chart -->
+<div class="row g-3 mb-3">
+  <div class="col-lg-8">
+    <div class="chart-card">
+      <h6>RI Coverage &amp; Utilization</h6>
+      <div id="chart-coverage" style="min-height:350px"></div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="chart-card h-100">
+      <h6>Active Savings Plans</h6>
+      {% if sp_summary %}
+      <table class="table table-sm table-hover">
+        <thead><tr><th>Type</th><th class="text-end">$/hr</th><th class="text-end">Count</th></tr></thead>
+        <tbody>
+          {% for sp in sp_summary %}
+          <tr>
+            <td><small>{{ sp.plan_type }}</small></td>
+            <td class="text-end"><small>${{ sp.commitment|floatformat:4 }}</small></td>
+            <td class="text-end"><small>{{ sp.count }}</small></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="text-muted small mt-2">No active savings plans.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- RI Summary table -->
+<div class="row g-3">
+  <div class="col-12">
+    <div class="chart-card">
+      <h6>Active Reserved Instances</h6>
+      {% if ri_summary %}
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead>
+            <tr>
+              <th>Instance Type</th>
+              <th>Region</th>
+              <th>Class</th>
+              <th class="text-end">Count</th>
+              <th class="text-end">Norm. Units</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for ri in ri_summary %}
+            <tr>
+              <td>{{ ri.instance_type }}</td>
+              <td>{{ ri.region }}</td>
+              <td><span class="badge bg-secondary">{{ ri.offering_class }}</span></td>
+              <td class="text-end">{{ ri.count }}</td>
+              <td class="text-end">{{ ri.units|floatformat:1 }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="text-muted small">No reserved instances found. Load fixture data via <a href="/admin/">admin</a>.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  const bp = "{{ billing_period }}";
+  const acct = "{{ account_id }}";
+  loadChart("chart-coverage", `/api/v1/viz/ri-coverage/?account_id=${acct}&billing_period=${bp}`);
+</script>
+{% endblock %}

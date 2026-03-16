@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Anomalies — AWS Cost Analyzer{% endblock %}
+{% block nav_anomalies %}active{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Cost Anomalies</h1>
+</div>
+
+<!-- Filter bar -->
+<div class="filter-bar mb-4">
+  <form class="row g-2 align-items-end" method="get">
+    <div class="col-auto">
+      <label class="form-label small mb-1">Account</label>
+      <select name="account_id" class="form-select form-select-sm" style="min-width:180px">
+        <option value="">All accounts</option>
+        {% for a in accounts %}
+          <option value="{{ a.account_id }}" {% if a.account_id == account_id %}selected{% endif %}>
+            {{ a.account_name }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-1">Service</label>
+      <select name="service" class="form-select form-select-sm" style="min-width:140px">
+        <option value="">All services</option>
+        {% for s in services %}
+          <option value="{{ s }}" {% if s == service %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-1">Status</label>
+      <select name="acknowledged" class="form-select form-select-sm">
+        <option value="" {% if acknowledged == "" %}selected{% endif %}>All</option>
+        <option value="false" {% if acknowledged == "false" %}selected{% endif %}>Unacknowledged</option>
+        <option value="true" {% if acknowledged == "true" %}selected{% endif %}>Acknowledged</option>
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-1">Chart Start</label>
+      <input type="date" name="start" value="{{ start }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-1">Chart End</label>
+      <input type="date" name="end" value="{{ end }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-auto">
+      <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+    </div>
+  </form>
+</div>
+
+<!-- Chart -->
+<div class="chart-card mb-4">
+  <h6>Cost &amp; Anomaly Overlay — {{ service|default:"All Services" }}, {{ region }}</h6>
+  <div id="chart-anomaly" style="min-height:380px"></div>
+</div>
+
+<!-- Anomaly table -->
+<div class="chart-card">
+  <h6>Detected Anomalies <span class="badge bg-secondary ms-1">{{ anomaly_list|length }}</span></h6>
+  {% if anomaly_list %}
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Period</th>
+          <th>Service</th>
+          <th>Region</th>
+          <th>Account</th>
+          <th>Direction</th>
+          <th class="text-end">Observed</th>
+          <th class="text-end">Baseline</th>
+          <th class="text-end">Δ%</th>
+          <th class="text-end">Z-Score</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in anomaly_list %}
+        <tr class="{% if a.acknowledged %}text-muted{% endif %}">
+          <td><small>{{ a.period_start|date:"Y-m-d H:i" }}</small></td>
+          <td>{{ a.service }}</td>
+          <td><small>{{ a.region }}</small></td>
+          <td><small>{{ a.linked_account_id }}</small></td>
+          <td>
+            {% if a.direction == "spike" %}
+              <span class="badge badge-spike">↑ spike</span>
+            {% else %}
+              <span class="badge badge-drop">↓ drop</span>
+            {% endif %}
+          </td>
+          <td class="text-end">${{ a.observed_cost|floatformat:2 }}</td>
+          <td class="text-end">${{ a.baseline_cost|floatformat:2 }}</td>
+          <td class="text-end {% if a.pct_change > 0 %}text-danger{% else %}text-primary{% endif %}">
+            {{ a.pct_change|floatformat:1 }}%
+          </td>
+          <td class="text-end">{{ a.z_score|floatformat:2|default:"—" }}</td>
+          <td>
+            {% if not a.acknowledged %}
+            <button class="btn btn-outline-secondary btn-sm py-0"
+                    onclick="acknowledge({{ a.id }}, this)">Ack</button>
+            {% else %}
+            <span class="text-muted small">✓</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-muted small mt-2">No anomalies found matching these filters.</p>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  const acct = "{{ account_id }}";
+  const svc  = "{{ service }}";
+  const reg  = "{{ region }}";
+  const start = "{{ start }}" || "2025-01-01";
+  const end   = "{{ end }}"   || "2025-02-01";
+
+  loadChart("chart-anomaly",
+    `/api/v1/viz/anomaly-chart/?account_id=${acct}&service=${svc || "AmazonEC2"}&region=${reg}&start=${start}&end=${end}`
+  );
+
+  function acknowledge(id, btn) {
+    fetch(`/api/v1/anomalies/${id}/acknowledge/`, {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken")},
+      body: JSON.stringify({acknowledged: true}),
+    }).then(r => {
+      if (r.ok) { btn.closest("tr").classList.add("text-muted"); btn.remove(); }
+    });
+  }
+
+  function getCookie(name) {
+    return document.cookie.split("; ").find(r => r.startsWith(name + "="))?.split("=")[1] || "";
+  }
+</script>
+{% endblock %}

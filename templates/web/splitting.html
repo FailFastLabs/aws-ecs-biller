@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Cost Splitting — AWS Cost Analyzer{% endblock %}
+{% block nav_splitting %}active{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex align-items-center justify-content-between">
+  <h1>Cost Splitting</h1>
+  <form class="d-flex gap-2" method="get">
+    <select name="billing_period" class="form-select form-select-sm" onchange="this.form.submit()">
+      {% for p in billing_periods %}
+        <option value="{{ p }}" {% if p == billing_period %}selected{% endif %}>{{ p }}</option>
+      {% endfor %}
+    </select>
+    {% if rule_id %}<input type="hidden" name="rule_id" value="{{ rule_id }}">{% endif %}
+  </form>
+</div>
+
+<div class="row g-3">
+  <!-- Rules list -->
+  <div class="col-lg-3">
+    <div class="chart-card">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0">Splitting Rules</h6>
+        <a href="/api/v1/splitting/rules/" target="_blank" class="btn btn-outline-primary btn-sm py-0">+ API</a>
+      </div>
+      {% if rules %}
+      <div class="list-group list-group-flush">
+        {% for r in rules %}
+        <a href="/splitting/?rule_id={{ r.id }}&billing_period={{ billing_period }}"
+           class="list-group-item list-group-item-action py-2 px-0 border-0 {% if r.id|stringformat:'s' == rule_id|stringformat:'s' %}fw-semibold{% endif %}">
+          <div class="d-flex justify-content-between">
+            <span>{{ r.name }}</span>
+            {% if r.active %}
+              <span class="badge bg-success-subtle text-success">active</span>
+            {% else %}
+              <span class="badge bg-secondary">off</span>
+            {% endif %}
+          </div>
+          <small class="text-muted">{{ r.service }} / {{ r.weight_strategy }}</small>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-muted small">No rules. Create one via the <a href="/api/v1/splitting/rules/">API</a>.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Right panel -->
+  <div class="col-lg-9">
+    {% if selected_rule %}
+    <div class="row g-3 mb-3">
+      <div class="col-md-5">
+        <div class="chart-card">
+          <h6>Sunburst — {{ selected_rule.name }}</h6>
+          <div id="chart-sunburst" style="min-height:380px"></div>
+        </div>
+      </div>
+      <div class="col-md-7">
+        <div class="chart-card h-100">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="mb-0">Tenant Breakdown — {{ billing_period }}</h6>
+            <form method="post" action="/api/v1/splitting/rules/{{ selected_rule.id }}/run/" id="run-form">
+              {% csrf_token %}
+              <input type="hidden" name="billing_period" value="{{ billing_period }}">
+              <button type="button" class="btn btn-primary btn-sm" onclick="runSplit()">
+                ▶ Run Split
+              </button>
+            </form>
+          </div>
+          <div id="run-status" class="mb-2"></div>
+          {% if tenant_breakdown %}
+          <table class="table table-sm table-hover">
+            <thead><tr><th>Tenant</th><th class="text-end">Allocated</th></tr></thead>
+            <tbody>
+              {% for t in tenant_breakdown %}
+              <tr>
+                <td>{{ t.tenant_tag_value }}</td>
+                <td class="text-end">${{ t.total|floatformat:4 }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% else %}
+          <p class="text-muted small">No split results yet for {{ billing_period }}. Click "Run Split" to generate them.</p>
+          {% endif %}
+          <hr class="my-2">
+          <div class="row g-2 mt-1">
+            <div class="col-6"><small class="text-muted d-block">Strategy</small>{{ selected_rule.weight_strategy }}</div>
+            <div class="col-6"><small class="text-muted d-block">Tag Key</small>{{ selected_rule.split_by_tag_key }}</div>
+            <div class="col-6"><small class="text-muted d-block">Service</small>{{ selected_rule.service }}</div>
+            <div class="col-6"><small class="text-muted d-block">Region</small>{{ selected_rule.region }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <div class="chart-card d-flex align-items-center justify-content-center" style="min-height:380px">
+      <div class="text-center text-muted">
+        <i class="bi bi-diagram-3" style="font-size:3rem"></i>
+        <p class="mt-2">Select a splitting rule to view results.</p>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  {% if rule_id %}
+  loadChart("chart-sunburst", `/api/v1/viz/split-sunburst/?rule_id={{ rule_id }}&billing_period={{ billing_period }}`, {
+    margin: {t: 10, r: 10, b: 10, l: 10},
+  });
+  {% endif %}
+
+  function runSplit() {
+    const status = document.getElementById("run-status");
+    status.innerHTML = '<span class="text-muted small">Running…</span>';
+    fetch(`/api/v1/splitting/rules/{{ rule_id }}/run/`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken")},
+      body: JSON.stringify({billing_period: "{{ billing_period }}"}),
+    }).then(r => r.json()).then(d => {
+      if (d.created !== undefined) {
+        status.innerHTML = `<span class="text-success small">✓ Created ${d.created} split records.</span>`;
+        setTimeout(() => location.reload(), 800);
+      } else {
+        status.innerHTML = `<span class="text-danger small">Error: ${d.error || "unknown"}</span>`;
+      }
+    });
+  }
+
+  function getCookie(name) {
+    return document.cookie.split("; ").find(r => r.startsWith(name + "="))?.split("=")[1] || "";
+  }
+</script>
+{% endblock %}

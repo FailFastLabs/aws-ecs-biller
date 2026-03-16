@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Cost Explorer — AWS Cost Analyzer{% endblock %}
+{% block nav_costs %}active{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Cost Explorer</h1>
+</div>
+
+<!-- Filter bar -->
+<div class="filter-bar mb-4">
+  <form class="row g-2 align-items-end" method="get" id="filter-form">
+    <div class="col-auto">
+      <label class="form-label small mb-1">Billing Period</label>
+      <select name="billing_period" class="form-select form-select-sm">
+        {% for p in billing_periods %}
+          <option value="{{ p }}" {% if p == billing_period %}selected{% endif %}>{{ p }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-1">Account</label>
+      <select name="account_id" class="form-select form-select-sm" style="min-width:180px">
+        <option value="">All accounts</option>
+        {% for a in accounts %}
+          <option value="{{ a.account_id }}" {% if a.account_id == account_id %}selected{% endif %}>
+            {{ a.account_name }} ({{ a.account_id }})
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-1">Service</label>
+      <select name="service" class="form-select form-select-sm" style="min-width:160px">
+        <option value="">All services</option>
+        {% for s in services %}
+          <option value="{{ s }}" {% if s == service %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-1">Region</label>
+      <select name="region" class="form-select form-select-sm" style="min-width:140px">
+        <option value="">All regions</option>
+        {% for r in regions %}
+          <option value="{{ r }}" {% if r == region %}selected{% endif %}>{{ r }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+    </div>
+  </form>
+</div>
+
+<!-- Daily trend + service breakdown -->
+<div class="row g-3 mb-3">
+  <div class="col-12">
+    <div class="chart-card">
+      <h6>Daily Cost Trend by Service</h6>
+      <div id="chart-daily" style="min-height:380px"></div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-7">
+    <div class="chart-card">
+      <h6>Service Breakdown — {{ billing_period }}</h6>
+      <div id="chart-breakdown" style="min-height:350px"></div>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="chart-card">
+      <h6>Spot vs On-Demand</h6>
+      <div class="mb-2 d-flex gap-2">
+        <select id="spot-region" class="form-select form-select-sm">
+          {% for r in regions %}<option>{{ r }}</option>{% endfor %}
+          {% if not regions %}<option>us-east-1</option>{% endif %}
+        </select>
+        <select id="spot-itype" class="form-select form-select-sm">
+          <option>m5.large</option><option>c5.xlarge</option><option>r5.large</option><option>t3.medium</option>
+        </select>
+        <button class="btn btn-outline-secondary btn-sm" onclick="loadSpot()">Go</button>
+      </div>
+      <div id="chart-spot" style="min-height:300px"></div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-12">
+    <div class="chart-card">
+      <h6>Hourly Cost Heatmap</h6>
+      <div id="chart-heatmap" style="min-height:300px"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  const bp = "{{ billing_period }}";
+  const acct = "{{ account_id }}";
+  const svc = "{{ service }}";
+  const reg = "{{ region }}";
+
+  function qs(base, params) {
+    const p = Object.entries(params).filter(([,v]) => v).map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+    return p ? `${base}?${p}` : base;
+  }
+
+  loadChart("chart-daily", qs("/api/v1/viz/daily-trend/", {account_id: acct, service: svc, region: reg}));
+  loadChart("chart-breakdown", qs("/api/v1/viz/service-breakdown/", {billing_period: bp, account_id: acct}));
+  loadChart("chart-heatmap", qs("/api/v1/viz/hourly-heatmap/", {account_id: acct, service: svc, region: reg}));
+
+  function loadSpot() {
+    const r = document.getElementById("spot-region").value;
+    const i = document.getElementById("spot-itype").value;
+    loadChart("chart-spot", `/api/v1/viz/spot-vs-od/?region=${r}&instance_type=${i}`);
+  }
+  loadSpot();
+</script>
+{% endblock %}

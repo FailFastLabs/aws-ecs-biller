@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Forecasting — AWS Cost Analyzer{% endblock %}
+{% block nav_forecasting %}active{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Cost Forecasting</h1>
+</div>
+
+<div class="row g-3">
+  <!-- Run list sidebar -->
+  <div class="col-lg-3">
+    <div class="chart-card">
+      <h6>Forecast Runs</h6>
+      {% if runs %}
+      <div class="list-group list-group-flush">
+        {% for run in runs %}
+        <a href="/forecasting/?run_id={{ run.id }}"
+           class="list-group-item list-group-item-action py-2 px-0 border-0 {% if run.id|stringformat:'s' == run_id|stringformat:'s' %}fw-semibold{% endif %}">
+          <div class="d-flex justify-content-between align-items-start">
+            <div>
+              <small class="d-block">{{ run.service|default:"(all)" }} — {{ run.grain }}</small>
+              <small class="text-muted">{{ run.region|default:"global" }}</small>
+            </div>
+            <small class="text-muted">{{ run.created_at|date:"m/d" }}</small>
+          </div>
+          {% if run.mape %}
+          <small class="text-muted">MAPE {{ run.mape|floatformat:1 }}%</small>
+          {% endif %}
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-muted small">No forecast runs yet.<br>
+        Use the <a href="/api/v1/forecasting/runs/">API</a> to trigger a run.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Chart -->
+  <div class="col-lg-9">
+    {% if run_id %}
+    <div class="chart-card mb-3">
+      <h6>Forecast vs Actual</h6>
+      <div id="chart-forecast" style="min-height:420px"></div>
+    </div>
+    {% if selected_run %}
+    <div class="chart-card">
+      <h6>Run Details</h6>
+      <div class="row g-2">
+        <div class="col-sm-4"><small class="text-muted d-block">Model</small>{{ selected_run.model_name }}</div>
+        <div class="col-sm-4"><small class="text-muted d-block">Grain</small>{{ selected_run.grain }}</div>
+        <div class="col-sm-4"><small class="text-muted d-block">Horizon</small>{{ selected_run.forecast_horizon }}h</div>
+        <div class="col-sm-4"><small class="text-muted d-block">Training</small>{{ selected_run.training_start }} → {{ selected_run.training_end }}</div>
+        <div class="col-sm-4"><small class="text-muted d-block">MAE</small>{{ selected_run.mae|floatformat:4|default:"—" }}</div>
+        <div class="col-sm-4"><small class="text-muted d-block">MAPE</small>{% if selected_run.mape %}{{ selected_run.mape|floatformat:2 }}%{% else %}—{% endif %}</div>
+      </div>
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="chart-card d-flex align-items-center justify-content-center" style="min-height:400px">
+      <div class="text-center text-muted">
+        <i class="bi bi-graph-up-arrow" style="font-size:3rem"></i>
+        <p class="mt-2">Select a forecast run to view the chart.</p>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  {% if run_id %}
+  loadChart("chart-forecast", `/api/v1/viz/forecast-chart/?forecast_run_id={{ run_id }}`);
+  {% endif %}
+</script>
+{% endblock %}
