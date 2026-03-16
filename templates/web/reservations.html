@@ -137,6 +137,85 @@
      ═══════════════════════════════════════════════════════════════════════ -->
 <div class="tab-pane fade" id="tab-solver">
 
+  <!-- ── Current RI snapshot ───────────────────────────────────────────── -->
+  {% with ri_instance_total=0 ri_hourly_total=0 %}
+  <div class="row g-2 mb-3">
+    <div class="col-6 col-sm-3">
+      <div class="card p-2 text-center">
+        <div class="small text-muted">Active RIs</div>
+        <div class="fs-4 fw-bold">{{ ri_list|length }}</div>
+        <div class="small text-muted">reservations</div>
+      </div>
+    </div>
+    <div class="col-6 col-sm-3">
+      <div class="card p-2 text-center">
+        <div class="small text-muted">Total Instances</div>
+        <div class="fs-4 fw-bold" id="ri-instance-count">—</div>
+        <div class="small text-muted">instances</div>
+      </div>
+    </div>
+    <div class="col-6 col-sm-3">
+      <div class="card p-2 text-center">
+        <div class="small text-muted">RI $/hr Committed</div>
+        <div class="fs-4 fw-bold" id="ri-hourly-committed">—</div>
+        <div class="small text-muted">across all types</div>
+      </div>
+    </div>
+    <div class="col-6 col-sm-3">
+      <div class="card p-2 text-center">
+        <div class="small text-muted">Active SPs</div>
+        <div class="fs-4 fw-bold">{{ sp_list|length }}</div>
+        <div class="small text-muted">savings plans</div>
+      </div>
+    </div>
+  </div>
+  {% endwith %}
+
+  <!-- Per-type RI breakdown -->
+  {% if ri_list %}
+  <div class="row g-2 mb-3">
+    <div class="col-12">
+      <div class="chart-card py-2">
+        <h6 class="mb-2 small fw-semibold text-muted text-uppercase">Reserved Instances by Type</h6>
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Instance Type</th>
+                <th>Region</th>
+                <th>Class</th>
+                <th class="text-end">Count</th>
+                <th class="text-end">Norm Units</th>
+                <th class="text-end">$/hr each</th>
+                <th class="text-end">$/hr total</th>
+                <th>Expires</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for ri in ri_list %}
+              <tr>
+                <td><strong>{{ ri.instance_type }}</strong></td>
+                <td><small>{{ ri.region }}</small></td>
+                <td>
+                  <span class="badge bg-{% if ri.offering_class == 'convertible' %}info text-dark{% else %}secondary{% endif %}">
+                    {{ ri.offering_class }}
+                  </span>
+                </td>
+                <td class="text-end">{{ ri.instance_count }}</td>
+                <td class="text-end">{{ ri.normalized_units|floatformat:1 }}</td>
+                <td class="text-end">${{ ri.recurring_hourly_cost|floatformat:4 }}</td>
+                <td class="text-end fw-semibold">${{ ri.total_hourly|floatformat:4 }}</td>
+                <td><small class="days-left" data-end="{{ ri.end_date }}">—</small></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- ── Portfolio sizing recommendation ──────────────────────────────── -->
   <div class="row g-3 mb-3">
     <div class="col-12">
@@ -385,6 +464,19 @@
 
 {% block extra_js %}
 <script>
+// ── RI snapshot cards (computed from server-rendered data) ─────────────
+(function() {
+  const riData = [
+    {% for ri in ri_list %}
+    { count: {{ ri.instance_count }}, total_hourly: {{ ri.total_hourly }} }{% if not forloop.last %},{% endif %}
+    {% endfor %}
+  ];
+  const totalInstances = riData.reduce((s, r) => s + r.count, 0);
+  const totalHourly    = riData.reduce((s, r) => s + r.total_hourly, 0);
+  document.getElementById('ri-instance-count').textContent    = totalInstances;
+  document.getElementById('ri-hourly-committed').textContent  = '$' + totalHourly.toFixed(4);
+})();
+
 const bp      = "{{ billing_period }}";
 const acct    = "{{ account_id }}";
 let selType   = "{{ sel_type }}";

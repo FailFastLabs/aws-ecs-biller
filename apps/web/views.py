@@ -115,6 +115,10 @@ def reservations(request):
             "scope", "tenancy", "platform", "state",
         ).order_by("end_date")
     )
+    for ri in ri_list:
+        ri["total_hourly"] = round(
+            float(ri["recurring_hourly_cost"] or 0) * (ri["instance_count"] or 1), 4
+        )
 
     sp_qs = SavingsPlan.objects.filter(state="active")
     if account_id:
