@@ -27,8 +27,10 @@ COPY --from=build /usr/local/bin/celery /usr/local/bin/celery
 
 WORKDIR /app
 COPY . .
+COPY docker/entrypoint.sh /entrypoint.sh
 
-RUN chown -R appuser:appgroup /app
+RUN chmod +x /entrypoint.sh \
+    && chown -R appuser:appgroup /app
 
 ENV PYTHONUNBUFFERED=1
 ENV DJANGO_SETTINGS_MODULE=config.settings.production
@@ -38,4 +40,5 @@ USER appuser
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/accounts/')" || exit 1
 
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "120"]
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["gunicorn", "config.wsgi:application", "--config", "gunicorn.conf.py"]

@@ -110,3 +110,49 @@ REST_FRAMEWORK = {
 
 CUR_LOCAL_STORAGE = BASE_DIR / "cur_data"
 CUR_LOCAL_STORAGE.mkdir(exist_ok=True)
+
+# Celery task defaults
+CELERY_TASK_SOFT_TIME_LIMIT = 300   # 5 min — raises SoftTimeLimitExceeded
+CELERY_TASK_TIME_LIMIT = 360        # 6 min — hard kill
+CELERY_TASK_MAX_RETRIES = 3
+CELERY_TASK_DEFAULT_RETRY_DELAY = 60  # seconds
+CELERY_TASK_ACKS_LATE = True        # re-queue on worker crash
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # fair dispatch for long tasks
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {asctime} {module} {process:d} {thread:d} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": os.environ.get("LOG_LEVEL", "INFO"),
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console"],
+            "level": os.environ.get("DJANGO_LOG_LEVEL", "INFO"),
+            "propagate": False,
+        },
+        "django.request": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "celery": {
+            "handlers": ["console"],
+            "level": os.environ.get("CELERY_LOG_LEVEL", "INFO"),
+            "propagate": False,
+        },
+    },
+}
