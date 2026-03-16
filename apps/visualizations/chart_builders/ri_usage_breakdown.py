@@ -12,11 +12,10 @@ def build_ri_hourly_usage(
     """
     Stacked area chart of hourly EC2 usage for a specific instance_type+region:
       - RI Covered           (green,  bottom)
-      - Unused RI Capacity   (black,  above RI — paid-for but idle reserved units)
-      - Savings Plan Covered (purple, above unused RI)
+      - Savings Plan Covered (purple, above RI — only SP rows for this instance type)
       - On-Demand            (red,    above SP)
       - Spot                 (yellow, top)
-    Blue dashed line at ri_capacity sits exactly at the RI/OD boundary.
+    Blue dotted line at ri_capacity (instance_count units, matching usage_quantity).
     """
     from apps.costs.models import LineItem
     from apps.reservations.models import ReservedInstance
@@ -78,11 +77,8 @@ def build_ri_hourly_usage(
     if account_id:
         ri_cap_qs = ri_cap_qs.filter(account__account_id=account_id)
     ri_capacity = sum(
-        float(r["normalized_units"]) for r in ri_cap_qs.values("normalized_units")
+        r["instance_count"] for r in ri_cap_qs.values("instance_count")
     )
-
-    # Unused capacity: paid-for RI units that weren't used this hour
-    unused_y = [round(max(ri_capacity - v, 0), 3) for v in ri_y]
 
     traces = [
         {
@@ -94,18 +90,7 @@ def build_ri_hourly_usage(
             "stackgroup": "usage",
             "fillcolor": "rgba(25,135,84,0.6)",
             "line": {"color": "rgba(25,135,84,0.8)", "width": 0.5},
-            "hovertemplate": "RI covered: %{y:.2f} units<extra></extra>",
-        },
-        {
-            "type": "scatter",
-            "mode": "lines",
-            "name": "Unused RI Capacity",
-            "x": sorted_hours,
-            "y": unused_y,
-            "stackgroup": "usage",
-            "fillcolor": "rgba(40,40,40,0.45)",
-            "line": {"color": "rgba(40,40,40,0.6)", "width": 0.5},
-            "hovertemplate": "Unused RI: %{y:.2f} units (paid, idle)<extra></extra>",
+            "hovertemplate": "RI covered: %{y:.2f} instances<extra></extra>",
         },
         {
             "type": "scatter",
@@ -116,7 +101,7 @@ def build_ri_hourly_usage(
             "stackgroup": "usage",
             "fillcolor": "rgba(111,66,193,0.55)",
             "line": {"color": "rgba(111,66,193,0.8)", "width": 0.5},
-            "hovertemplate": "SP: %{y:.2f} units<extra></extra>",
+            "hovertemplate": "SP: %{y:.2f} instances<extra></extra>",
         },
         {
             "type": "scatter",
@@ -127,7 +112,7 @@ def build_ri_hourly_usage(
             "stackgroup": "usage",
             "fillcolor": "rgba(220,53,69,0.55)",
             "line": {"color": "rgba(220,53,69,0.8)", "width": 0.5},
-            "hovertemplate": "OD: %{y:.2f} units<extra></extra>",
+            "hovertemplate": "OD: %{y:.2f} instances<extra></extra>",
         },
         {
             "type": "scatter",
@@ -138,7 +123,7 @@ def build_ri_hourly_usage(
             "stackgroup": "usage",
             "fillcolor": "rgba(255,193,7,0.55)",
             "line": {"color": "rgba(255,193,7,0.8)", "width": 0.5},
-            "hovertemplate": "Spot: %{y:.2f} units<extra></extra>",
+            "hovertemplate": "Spot: %{y:.2f} instances<extra></extra>",
         },
     ]
 
@@ -146,16 +131,16 @@ def build_ri_hourly_usage(
         traces.append({
             "type": "scatter",
             "mode": "lines",
-            "name": f"RI Capacity ({ri_capacity:.1f} units)",
+            "name": f"RI Capacity ({ri_capacity} instances)",
             "x": [sorted_hours[0], sorted_hours[-1]],
             "y": [ri_capacity, ri_capacity],
             "line": {"color": "#0d6efd", "width": 2, "dash": "dot"},
-            "hovertemplate": f"RI capacity: {ri_capacity:.1f} units<extra></extra>",
+            "hovertemplate": f"RI capacity: {ri_capacity} instances<extra></extra>",
         })
 
     layout = {
         "xaxis": {"title": "", "type": "date"},
-        "yaxis": {"title": "Normalized Instance-Units"},
+        "yaxis": {"title": "Instance-Hours"},
         "legend": {"orientation": "h", "y": -0.25},
         "margin": {"t": 20, "b": 80, "l": 60, "r": 20},
         "hovermode": "x unified",
