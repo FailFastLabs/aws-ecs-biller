@@ -10,12 +10,14 @@ def build_ri_hourly_usage(
     n_days: int = 7,
 ) -> dict:
     """
-    Stacked area chart of hourly EC2 usage for a specific instance_type+region:
-      - RI Covered           (green,  bottom)
-      - Savings Plan Covered (purple, above RI — only SP rows for this instance type)
-      - On-Demand            (red,    above SP)
-      - Spot                 (yellow, top)
-    Blue dotted line at ri_capacity (instance_count units, matching usage_quantity).
+    Stacked area chart of hourly EC2 usage for a specific instance_type+region.
+
+    SP and Spot layers come from real CUR data.  The RI/OD split is
+    *re-computed* using the **current** RI capacity (instance_count) so the
+    blue dotted capacity line always sits exactly at the RI ↔ OD boundary.
+
+    Stack order (bottom → top):
+      Reserved (green) → SP (purple) → On-Demand (red) → Spot (yellow)
     """
     from apps.costs.models import LineItem
     from apps.reservations.models import ReservedInstance
@@ -45,17 +47,18 @@ def build_ri_hourly_usage(
             .order_by("hour")
         )
 
-    ri_qs   = hourly_qty({"line_item_type": "DiscountedUsage"})
-    sp_qs   = hourly_qty({"line_item_type": "SavingsPlanCoveredUsage"})
-    od_qs   = hourly_qty({"line_item_type": "Usage", "pricing_term": "OnDemand"})
-    spot_qs = hourly_qty({"line_item_type": "Usage", "pricing_term": ""})
+    # Real CUR data per billing category
+    ri_cur_qs = hourly_qty({"line_item_type": "DiscountedUsage"})
+    sp_qs     = hourly_qty({"line_item_type": "SavingsPlanCoveredUsage"})
+    od_cur_qs = hourly_qty({"line_item_type": "Usage", "pricing_term": "OnDemand"})
+    spot_qs   = hourly_qty({"line_item_type": "Usage", "pricing_term": ""})
 
-    # Merge into a dict keyed by hour string
     hours: dict = {}
-    for label, qs in [("ri", ri_qs), ("sp", sp_qs), ("od", od_qs), ("spot", spot_qs)]:
+    for label, qs in [("ri_cur", ri_cur_qs), ("sp", sp_qs),
+                       ("od_cur", od_cur_qs), ("spot", spot_qs)]:
         for row in qs:
             h = row["hour"].strftime("%Y-%m-%dT%H:%M:%S")
-            hours.setdefault(h, {"ri": 0.0, "sp": 0.0, "od": 0.0, "spot": 0.0})
+            hours.setdefault(h, {"ri_cur": 0.0, "sp": 0.0, "od_cur": 0.0, "spot": 0.0})
             hours[h][label] += float(row["qty"] or 0)
 
     if not hours:
@@ -64,13 +67,7 @@ def build_ri_hourly_usage(
             "layout": {"title": f"No usage data for {instance_type} / {region} in last {n_days} days"},
         }
 
-    sorted_hours = sorted(hours.keys())
-    ri_y   = [round(hours[h]["ri"],   3) for h in sorted_hours]
-    sp_y   = [round(hours[h]["sp"],   3) for h in sorted_hours]
-    od_y   = [round(hours[h]["od"],   3) for h in sorted_hours]
-    spot_y = [round(hours[h]["spot"], 3) for h in sorted_hours]
-
-    # Current purchased RI capacity (normalized units / hr) for this type+region
+    # Current RI capacity (instance_count — same unit as usage_quantity)
     ri_cap_qs = ReservedInstance.objects.filter(
         state="active", instance_type=instance_type, region=region
     )
@@ -79,6 +76,21 @@ def build_ri_hourly_usage(
     ri_capacity = sum(
         r["instance_count"] for r in ri_cap_qs.values("instance_count")
     )
+
+    # Re-split RI + OD using current RI capacity instead of historical CUR split
+    sorted_hours = sorted(hours.keys())
+    ri_y   = []
+    sp_y   = []
+    od_y   = []
+    spot_y = []
+    for h in sorted_hours:
+        d = hours[h]
+        sp_y.append(round(d["sp"], 3))
+        spot_y.append(round(d["spot"], 3))
+        # Base usage = everything that was either RI-covered or OD in the CUR
+        base_usage = d["ri_cur"] + d["od_cur"]
+        ri_y.append(round(min(base_usage, ri_capacity), 3))
+        od_y.append(round(max(base_usage - ri_capacity, 0), 3))
 
     traces = [
         {
@@ -90,7 +102,7 @@ def build_ri_hourly_usage(
             "stackgroup": "usage",
             "fillcolor": "rgba(25,135,84,0.6)",
             "line": {"color": "rgba(25,135,84,0.8)", "width": 0.5},
-            "hovertemplate": "RI covered: %{y:.2f} instances<extra></extra>",
+            "hovertemplate": "RI covered: %{y:.2f}<extra></extra>",
         },
         {
             "type": "scatter",
@@ -101,7 +113,7 @@ def build_ri_hourly_usage(
             "stackgroup": "usage",
             "fillcolor": "rgba(111,66,193,0.55)",
             "line": {"color": "rgba(111,66,193,0.8)", "width": 0.5},
-            "hovertemplate": "SP: %{y:.2f} instances<extra></extra>",
+            "hovertemplate": "SP covered: %{y:.2f}<extra></extra>",
         },
         {
             "type": "scatter",
@@ -112,7 +124,7 @@ def build_ri_hourly_usage(
             "stackgroup": "usage",
             "fillcolor": "rgba(220,53,69,0.55)",
             "line": {"color": "rgba(220,53,69,0.8)", "width": 0.5},
-            "hovertemplate": "OD: %{y:.2f} instances<extra></extra>",
+            "hovertemplate": "OD: %{y:.2f}<extra></extra>",
         },
         {
             "type": "scatter",
@@ -123,7 +135,7 @@ def build_ri_hourly_usage(
             "stackgroup": "usage",
             "fillcolor": "rgba(255,193,7,0.55)",
             "line": {"color": "rgba(255,193,7,0.8)", "width": 0.5},
-            "hovertemplate": "Spot: %{y:.2f} instances<extra></extra>",
+            "hovertemplate": "Spot: %{y:.2f}<extra></extra>",
         },
     ]
 
@@ -131,11 +143,11 @@ def build_ri_hourly_usage(
         traces.append({
             "type": "scatter",
             "mode": "lines",
-            "name": f"RI Capacity ({ri_capacity} instances)",
+            "name": f"RI Capacity ({ri_capacity})",
             "x": [sorted_hours[0], sorted_hours[-1]],
             "y": [ri_capacity, ri_capacity],
             "line": {"color": "#0d6efd", "width": 2, "dash": "dot"},
-            "hovertemplate": f"RI capacity: {ri_capacity} instances<extra></extra>",
+            "hovertemplate": f"RI capacity: {ri_capacity}<extra></extra>",
         })
 
     layout = {
