@@ -32,29 +32,30 @@ LINKED_PROD = "123456789012"
 LINKED_STAGING = "234567890123"
 
 START_DT = datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)
-NOW_DT = datetime.now(tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
+# Pinned so fixture output is deterministic across runs
+END_DT = datetime(2026, 3, 1, 0, 0, tzinfo=timezone.utc)
 
 # ── EC2 instance configs ──────────────────────────────────────────────────────
 EC2_CFGS = [
     dict(region="us-east-1", az="us-east-1a", itype="m5.xlarge",  ifamily="m5",
          account=LINKED_PROD,    od_hourly=0.1920, ri_discount=0.30,
-         base_count=8, seed=42, tag_env="prod",    tag_team="backend"),
+         base_count=40, seed=42, tag_env="prod",    tag_team="backend"),
     dict(region="us-east-1", az="us-east-1b", itype="m5.large",   ifamily="m5",
          account=LINKED_PROD,    od_hourly=0.0960, ri_discount=0.0,
-         base_count=5, seed=43, tag_env="dev",     tag_team="backend"),
+         base_count=25, seed=43, tag_env="dev",     tag_team="backend"),
     dict(region="us-east-1", az="us-east-1c", itype="c5.xlarge",  ifamily="c5",
          account=LINKED_PROD,    od_hourly=0.1700, ri_discount=0.32,
-         base_count=6, seed=44, tag_env="prod",    tag_team="data"),
+         base_count=30, seed=44, tag_env="prod",    tag_team="data"),
     dict(region="us-east-1", az="us-east-1a", itype="r5.2xlarge", ifamily="r5",
          account=LINKED_PROD,    od_hourly=0.5040, ri_discount=0.35,
-         base_count=4, seed=45, tag_env="prod",    tag_team="data",
+         base_count=20, seed=45, tag_env="prod",    tag_team="data",
          active_from=datetime(2025, 2, 1, tzinfo=timezone.utc)),
     dict(region="us-west-2", az="us-west-2a", itype="m5.2xlarge", ifamily="m5",
          account=LINKED_STAGING, od_hourly=0.4160, ri_discount=0.28,
-         base_count=3, seed=46, tag_env="staging", tag_team="platform"),
+         base_count=15, seed=46, tag_env="staging", tag_team="platform"),
     dict(region="eu-west-1", az="eu-west-1a", itype="r5.large",   ifamily="r5",
          account=LINKED_PROD,    od_hourly=0.1480, ri_discount=0.0,
-         base_count=2, seed=47, tag_env="prod",    tag_team="frontend"),
+         base_count=10, seed=47, tag_env="prod",    tag_team="frontend"),
 ]
 
 # Savings plan ARN
@@ -581,10 +582,10 @@ def s3_row(day: datetime, cost: float, storage_gb: float) -> dict:
 # ── Main generation ───────────────────────────────────────────────────────────
 
 def main():
-    all_hours = _hours_range(START_DT, NOW_DT)
-    all_days = pd.date_range(START_DT, NOW_DT - timedelta(hours=1), freq="D", tz="UTC")
+    all_hours = _hours_range(START_DT, END_DT)
+    all_days = pd.date_range(START_DT, END_DT - timedelta(hours=1), freq="D", tz="UTC")
 
-    print(f"Generating data from {START_DT.date()} to {NOW_DT.date()}")
+    print(f"Generating data from {START_DT.date()} to {END_DT.date()}")
     print(f"  {len(all_hours):,} hours, {len(all_days):,} days")
 
     # ── Step 1: generate raw EC2 instance counts ───────────────────────────
@@ -787,7 +788,7 @@ def main():
             ("eu-west-1", "r5.large",   "eu-west-1a", 0.148),
         ]:
             # Sample every 6 hours over the full period
-            sample_hours = pd.date_range(START_DT, NOW_DT, freq="6h", tz="UTC")
+            sample_hours = pd.date_range(START_DT, END_DT, freq="6h", tz="UTC")
             spot_base = od_price * 0.35  # spot ~ 35% of OD base
             for sh in sample_hours:
                 months = (sh - pd.Timestamp(START_DT)).total_seconds() / (30*24*3600)
